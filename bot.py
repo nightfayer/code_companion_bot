@@ -98,21 +98,23 @@ SUPPORTED_EXTENSIONS = {
 }
 
 
-# ===================== ПАРСЕР MARKDOWN -> TELEGRAM HTML =====================
+def escape_telegram_html(s: str) -> str:
+    """Telegram HTML поддерживает ТОЛЬКО &lt;, &gt;, &amp;. Кавычки ' и \" экранировать нельзя!"""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 
 def markdown_to_telegram_html(text: str) -> str:
     """
     Преобразует стандартный Markdown модели в валидный Telegram HTML:
     - Блоки кода с указанием языка <pre><code class="language-...">
-    - Сворачиваемые цитаты <blockquote expandable> и обычные <blockquote> (фича Bot API)
+    - Сворачиваемые цитаты <blockquote expandable> и обычные <blockquote>
     - Жирный <b>, курсив <i>, зачеркнутый <s>, код <code>
-    - Заголовки с эмодзи
-    - Экранирование спецсимволов HTML вне тегов
+    - Экранирование спецсимволов (&, <, >) без ломающих Telegram сущностей (&quot;, &#x27;)
     """
     code_blocks = []
     emoji_tags = []
 
-    # 1. Сохраняем кастомные премиум эмодзи <tg-emoji ...>...</tg-emoji> (фича Bot API 9.4)
+    # 1. Сохраняем кастомные премиум эмодзи <tg-emoji ...>...</tg-emoji>
     def replace_emoji(m):
         idx = len(emoji_tags)
         emoji_tags.append(m.group(0))
@@ -120,11 +122,11 @@ def markdown_to_telegram_html(text: str) -> str:
 
     text = re.sub(r"<tg-emoji[^>]*>.*?</tg-emoji>", replace_emoji, text, flags=re.DOTALL)
 
-    # 2. Сохраняем блоки кода, экранируя их содержимое
+    # 2. Сохраняем блоки кода, экранируя только &, <, >
     def replace_code_block(m):
         lang = m.group(1).strip() if m.group(1) else ""
         code = m.group(2).strip("\r\n")
-        escaped_code = html.escape(code)
+        escaped_code = escape_telegram_html(code)
         idx = len(code_blocks)
         if lang:
             tag = f'<pre><code class="language-{lang}">{escaped_code}</code></pre>'
@@ -133,17 +135,22 @@ def markdown_to_telegram_html(text: str) -> str:
         code_blocks.append(tag)
         return f"___CODE_BLOCK_{idx}___"
 
-    # Ищем тройные бэктики
     text = re.sub(r"```([a-zA-Z0-9_\+\-\#]*)\n?(.*?)```", replace_code_block, text, flags=re.DOTALL)
 
-    # 3. Экранируем HTML в обычном тексте
-    text = html.escape(text)
+    # 3. Экранируем &, <, > в обычном тексте
+    text = escape_telegram_html(text)
 
     # 4. Инлайн-код `code`
     text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
 
-    # 5. Заголовки (###, ##, #)
-    text = re.sub(r"(?m)^#{1,4}\s*(.*?)$", r"📌 <b>\1</b>", text)
+    # 5. Заголовки (без дублирования эмодзи)
+    def format_header(m):
+        header_text = m.group(1).strip()
+        if any(header_text.startswith(e) for e in ("📌", "💡", "🚀", "⚠️", "📂", "🔍", "⚡", "🧪")):
+            return f"<b>{header_text}</b>"
+        return f"📌 <b>{header_text}</b>"
+
+    text = re.sub(r"(?m)^#{1,4}\s*(.*?)$", format_header, text)
 
     # 6. Жирный шрифт (**text**)
     text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
@@ -155,8 +162,14 @@ def markdown_to_telegram_html(text: str) -> str:
     # 8. Зачеркнутый (~~text~~)
     text = re.sub(r"~~(.*?)~~", r"<s>\1</s>", text)
 
-    # 9. Цитаты Telegram (обычные и сворачиваемые)
-    text = re.sub(r"(?m)^(?:&gt;\s*.*(?:\n|$))+", lambda m: f"<blockquote>{m.group(0).replace('&gt;', '').strip()}</blockquote>\n", text)
+    # 9. Цитаты Telegram
+    def format_bq(m):
+        lines = m.group(0).splitlines()
+        cleaned = [re.sub(r"^&gt;\s*", "", line) for line in lines]
+        content = "\n".join(cleaned).strip()
+        return f"<blockquote>{content}</blockquote>\n"
+
+    text = re.sub(r"(?m)^(?:&gt;\s*.*(?:\n|$))+", format_bq, text)
 
     # 10. Возвращаем сохраненные блоки кода и эмодзи
     for idx, cb in enumerate(code_blocks):
@@ -168,22 +181,31 @@ def markdown_to_telegram_html(text: str) -> str:
     return text.strip()
 
 
-def split_text(text: str, max_chars: int = 3900) -> list[str]:
-    """Разбивка длинных текстов на части с сохранением структуры."""
+def split_markdown_into_chunks(text: str, max_chars: int = 3500) -> list[str]:
+    """Разбивает Markdown по смысловым параграфам ДО конвертации, чтобы не разрывать HTML-теги."""
+    if len(text) <= max_chars:
+        return [text]
+
     chunks = []
-    while len(text) > max_chars:
-        split_idx = text.rfind("\n", 0, max_chars)
-        if split_idx == -1:
-            split_idx = max_chars
-        chunks.append(text[:split_idx])
-        text = text[split_idx:].strip()
-    if text:
-        chunks.append(text)
+    paragraphs = text.split("\n\n")
+    current_chunk = ""
+
+    for p in paragraphs:
+        if len(current_chunk) + len(p) + 2 <= max_chars:
+            current_chunk += (("\n\n" if current_chunk else "") + p)
+        else:
+            if current_chunk:
+                chunks.append(current_chunk)
+            current_chunk = p
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
     return chunks
 
 
 async def set_safe_reaction(message: types.Message, emoji: str):
-    """Ставит реакцию на сообщение (новая фича Telegram Bot API)."""
+    """Ставит реакцию на сообщение (фича Bot API)."""
     try:
         await message.react([ReactionTypeEmoji(emoji=emoji)])
     except Exception:
@@ -226,32 +248,34 @@ async def ask_model(messages: list[dict], enable_thinking: bool = False) -> tupl
 
 async def send_formatted_response(chat_id: int, reasoning: str, content: str, show_thinking: bool):
     """
-    Отправляет ответ с премиальным форматированием:
-    - Рассуждения модели в сворачиваемом блоке <blockquote expandable> (фича Telegram 2024-2026).
-    - Основной текст с красивой типографикой HTML.
+    Отправляет ответ пользователю с гарантированно валидной разметкой Telegram HTML.
     """
-    # 1. Если включен режим рассуждений — выводим его в новом формате сворачиваемой цитаты
+    # 1. Если включен режим рассуждений
     if show_thinking and reasoning:
-        escaped_reasoning = html.escape(reasoning)
+        escaped_reasoning = escape_telegram_html(reasoning)
         spoiler_text = (
             "🧠 <b>Ход рассуждений модели (Chain of Thought):</b>\n"
             f"<blockquote expandable>{escaped_reasoning}</blockquote>"
         )
-        for chunk in split_text(spoiler_text, max_chars=3500):
-            try:
-                await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=ParseMode.HTML)
-            except Exception:
-                await bot.send_message(chat_id=chat_id, text=f"🧠 Ход рассуждений:\n{reasoning}")
+        try:
+            await bot.send_message(chat_id=chat_id, text=spoiler_text, parse_mode=ParseMode.HTML)
+        except Exception:
+            clean_reasoning = re.sub(r"<[^>]+>", "", spoiler_text)
+            await bot.send_message(chat_id=chat_id, text=clean_reasoning)
 
     # 2. Основной ответ
     if content:
-        formatted_html = markdown_to_telegram_html(content)
-        for chunk in split_text(formatted_html, max_chars=3900):
+        # Разбиваем текст по логическим блокам ДО парсинга, чтобы не рвать открытые теги
+        chunks = split_markdown_into_chunks(content, max_chars=3500)
+        for chunk in chunks:
+            formatted_html = markdown_to_telegram_html(chunk)
             try:
-                await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=ParseMode.HTML)
-            except TelegramBadRequest:
-                # Фоллбэк на обычный текст при непредвиденных ошибках вложенности тегов
-                await bot.send_message(chat_id=chat_id, text=chunk)
+                await bot.send_message(chat_id=chat_id, text=formatted_html, parse_mode=ParseMode.HTML)
+            except TelegramBadRequest as e:
+                # В случае непредвиденного сбоя парсинга Telegram очищаем теги, чтобы не показывать сырой HTML-код
+                clean_text = re.sub(r"<[^>]+>", "", formatted_html)
+                clean_text = html.unescape(clean_text)
+                await bot.send_message(chat_id=chat_id, text=clean_text)
     else:
         await bot.send_message(chat_id=chat_id, text="⚠️ Модель вернула пустой ответ.")
 
