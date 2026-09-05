@@ -1,0 +1,4 @@
+aiogram>=3.4.0
+openai>=1.14.0
+python-dotenv>=1.0.0
+aiohttp-socks>=0.8.4
