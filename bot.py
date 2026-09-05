@@ -249,24 +249,24 @@ async def send_formatted_response(chat_id: int, reasoning: str, content: str, sh
         await bot.send_message(chat_id=chat_id, text="⚠️ Модель вернула пустой ответ.")
 
 
-# ===================== КЛАВИАТУРЫ =====================
+# ===================== КЛАВИАТУРЫ С ЦВЕТОВЫМ КОДИРОВАНИЕМ =====================
 
 def get_code_keyboard():
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔍 Код-Ревью и баги", callback_data="act_review")
-    builder.button(text="⚡ Оценка O(N) и скорость", callback_data="act_complexity")
-    builder.button(text="🧪 Написать Unit-тесты", callback_data="act_tests")
-    builder.button(text="📝 Документация", callback_data="act_docs")
-    builder.button(text="💡 Рефакторинг по SOLID", callback_data="act_refactor")
+    builder.button(text="🔵 🔍 Код-Ревью", callback_data="act_review")
+    builder.button(text="🟡 ⚡ Сложность O(N)", callback_data="act_complexity")
+    builder.button(text="🟢 🧪 Unit-тесты", callback_data="act_tests")
+    builder.button(text="🟣 💡 Рефакторинг SOLID", callback_data="act_refactor")
+    builder.button(text="📘 📝 Документация", callback_data="act_docs")
     builder.adjust(2, 2, 1)
     return builder.as_markup()
 
 
 def get_mode_keyboard():
     builder = InlineKeyboardBuilder()
-    builder.button(text="🧑‍💻 Senior Ментор", callback_data="setmode_mentor")
-    builder.button(text="🔍 Строгий Ревьюер", callback_data="setmode_reviewer")
-    builder.button(text="⚡ Быстрый Ассистент", callback_data="setmode_assistant")
+    builder.button(text="🟢 🧑‍💻 Senior Ментор (Дружелюбный)", callback_data="setmode_mentor")
+    builder.button(text="🔴 🔍 Строгий Ревьюер (Аудит и баги)", callback_data="setmode_reviewer")
+    builder.button(text="⚡ ⚡ Быстрый Ассистент (Лаконичный)", callback_data="setmode_assistant")
     builder.adjust(1)
     return builder.as_markup()
 
