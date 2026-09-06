@@ -12,7 +12,18 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramNetworkError, TelegramBadRequest
-from aiogram.types import ReactionTypeEmoji, InlineQueryResultArticle, InputTextMessageContent
+from aiogram.types import (
+    ReactionTypeEmoji,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
+    InputRichMessage,
+    InputRichBlockTable,
+    InputRichBlockThinking,
+    InputRichBlockParagraph,
+    InputRichBlockPreformatted,
+    InputRichBlockSectionHeading,
+    RichBlockTableCell,
+)
 from aiogram.utils.chat_action import ChatActionSender
 import httpx
 from openai import AsyncOpenAI
@@ -49,13 +60,13 @@ client = AsyncOpenAI(
 
 # ===================== ПРАВИЛА И СТИЛИ ФОРМАТИРОВАНИЯ =====================
 FORMATTING_RULES = """
-ПРАВИЛА ОФОРМЛЕНИЯ ОТВЕТОВ (MARKDOWN ТИПОГРАФИКА ДЛЯ TELEGRAM):
+ПРАВИЛА ОФОРМЛЕНИЯ ОТВЕТОВ (RICH MESSAGES ДЛЯ TELEGRAM BOT API 10.1):
 1. Структура: Дели ответ на логические секции с аккуратными заголовками (например: '### 📌 Заголовок').
 2. Акценты: Выделяй ключевые термины, имена библиотек и главные выводы **жирным шрифтом**.
 3. Код в тексте: Имена переменных, типов, функций, методов и параметров ВСЕГДА оборачивай в `моноширинный шрифт`.
 4. Блоки кода: ВСЕГДА указывай язык программирования в начале блока (например, ```python, ```javascript, ```typescript, ```go, ```sql). Код должен быть чистым и с пояснениями.
-5. Списки: Используй аккуратные маркированные списки с эмодзи-буллетами (•, ✔️, ❌, ⚡, 💡).
-6. ТАБЛИЦЫ СТРОГО ЗАПРЕЩЕНЫ: Telegram НЕ умеет отображать Markdown-таблицы (символы | и ---). ВМЕСТО ТАБЛИЦ оформляй сравнительные данные списком карточек с буллетами (например: '• **Ситуация:** Параллельный запуск — **Как обработать:** `Promise.all(...)`').
+5. Таблицы: Если требуется сравнение параметров или характеристик — используй Markdown-таблицы (| Заголовок 1 | Заголовок 2 |). Бот автоматически транслирует их в нативные таблицы Telegram Bot API 10.1.
+6. Списки: Используй аккуратные маркированные списки с эмодзи-буллетами (•, ✔️, ❌, ⚡, 💡).
 7. Цитаты и сноски: Важные предупреждения, резюме или выводы оформляй в цитаты через '> Текст цитаты'.
 8. Язык: Отвечай на русском языке, живо, профессионально, без воды.
 """
@@ -360,25 +371,130 @@ async def ask_model(messages: list[dict], enable_thinking: bool = False) -> tupl
     return full_reasoning.strip(), full_content.strip()
 
 
+def build_rich_blocks_from_markdown(text: str) -> list:
+    """
+    Разбирает Markdown в нативные блоки Telegram Bot API 10.1 (Rich Messages):
+    - InputRichBlockSectionHeading: нативные заголовки (#, ##, ###)
+    - InputRichBlockTable: НАСТОЯЩИЕ нативные таблицы (| Header 1 | Header 2 |)
+    - InputRichBlockPreformatted: нативные блоки кода с языком программирования
+    - InputRichBlockParagraph: обычные текстовые параграфы
+    """
+    blocks = []
+    lines = text.strip().splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # 1. Нативные таблицы Telegram Bot API 10.1
+        if stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 2:
+            table_lines = []
+            while i < len(lines) and lines[i].strip().startswith("|") and lines[i].strip().endswith("|"):
+                table_lines.append(lines[i])
+                i += 1
+            if len(table_lines) >= 2:
+                headers = [c.strip() for c in table_lines[0].strip().strip("|").split("|")]
+                start_row = 1
+                if start_row < len(table_lines) and re.match(r"^[\s\|:\-]+$", table_lines[start_row].strip()):
+                    start_row = 2
+                grid = []
+                hdr_row = [types.RichBlockTableCell(text=h, align="left", valign="top", is_header=True) for h in headers]
+                grid.append(hdr_row)
+                for r in table_lines[start_row:]:
+                    cells = [c.strip() for c in r.strip().strip("|").split("|")]
+                    row_cells = [types.RichBlockTableCell(text=c, align="left", valign="top") for c in cells]
+                    grid.append(row_cells)
+                blocks.append(types.InputRichBlockTable(cells=grid, is_bordered=True))
+                continue
+
+        # 2. Нативные блоки кода (Preformatted)
+        if stripped.startswith("```"):
+            lang = stripped.lstrip("`").strip().lower()
+            code_lines = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+            if i < len(lines) and lines[i].strip().startswith("```"):
+                i += 1
+            blocks.append(types.InputRichBlockPreformatted(text="\n".join(code_lines), language=lang or None))
+            continue
+
+        # 3. Нативные заголовки разделов
+        if stripped.startswith("#"):
+            h_text = stripped.lstrip("#").strip()
+            level = min(max(len(stripped) - len(stripped.lstrip("#")), 1), 3)
+            blocks.append(types.InputRichBlockSectionHeading(text=h_text, size=level))
+            i += 1
+            continue
+
+        # 4. Текстовые параграфы
+        para_lines = []
+        while i < len(lines):
+            l_strip = lines[i].strip()
+            if not l_strip or l_strip.startswith("#") or l_strip.startswith("```") or (l_strip.startswith("|") and l_strip.endswith("|") and l_strip.count("|") >= 2):
+                break
+            para_lines.append(lines[i])
+            i += 1
+
+        if para_lines:
+            blocks.append(types.InputRichBlockParagraph(text="\n".join(para_lines)))
+        else:
+            i += 1
+
+    return blocks
+
+
 async def send_formatted_response(chat_id: int, reasoning: str, content: str, show_thinking: bool):
     """
-    Отправляет ответ пользователю с гарантированно валидной разметкой Telegram HTML.
+    Отправляет ответ пользователю через Telegram Bot API 10.1 (Rich Messages) ПО УМОЛЧАНИЮ:
+    - Нативный блок InputRichBlockThinking для рассуждений модели.
+    - Нативные таблицы InputRichBlockTable, заголовки, блоки кода.
+    - Автоматический fallback на классический HTML при старых клиентах/ошибках.
     """
-    # 1. Если включен режим рассуждений
+    # 1. Если включен режим рассуждений (Thinking)
     if show_thinking and reasoning:
-        escaped_reasoning = escape_telegram_html(reasoning)
-        spoiler_text = (
-            "🧠 <b>Ход рассуждений модели (Chain of Thought):</b>\n"
-            f"<blockquote expandable>{escaped_reasoning}</blockquote>"
-        )
+        sent_rich_thinking = False
         try:
-            await bot.send_message(chat_id=chat_id, text=spoiler_text, parse_mode=ParseMode.HTML)
+            # Нативный блок рассуждений Bot API 10.1
+            thinking_block = types.InputRichBlockThinking(text=reasoning[:3000])
+            rich_thinking_msg = types.InputRichMessage(blocks=[thinking_block])
+            await bot.send_rich_message(chat_id=chat_id, rich_message=rich_thinking_msg)
+            sent_rich_thinking = True
         except Exception:
-            clean_reasoning = re.sub(r"<[^>]+>", "", spoiler_text)
-            await bot.send_message(chat_id=chat_id, text=clean_reasoning)
+            sent_rich_thinking = False
+
+        if not sent_rich_thinking:
+            # Fallback на красивую сворачиваемую цитату
+            escaped_reasoning = escape_telegram_html(reasoning)
+            spoiler_text = (
+                "🧠 <b>Ход рассуждений модели (Chain of Thought):</b>\n"
+                f"<blockquote expandable>{escaped_reasoning}</blockquote>"
+            )
+            try:
+                await bot.send_message(chat_id=chat_id, text=spoiler_text, parse_mode=ParseMode.HTML)
+            except Exception:
+                clean_reasoning = re.sub(r"<[^>]+>", "", spoiler_text)
+                await bot.send_message(chat_id=chat_id, text=clean_reasoning)
 
     # 2. Основной ответ
-    if content:
+    if not content:
+        await bot.send_message(chat_id=chat_id, text="⚠️ Модель вернула пустой ответ.")
+        return
+
+    # Пробуем отправить через нативный Rich Message 10.1
+    sent_rich_content = False
+    try:
+        rich_blocks = build_rich_blocks_from_markdown(content)
+        if rich_blocks:
+            rich_msg = types.InputRichMessage(blocks=rich_blocks)
+            await bot.send_rich_message(chat_id=chat_id, rich_message=rich_msg)
+            sent_rich_content = True
+    except Exception:
+        sent_rich_content = False
+
+    # Если Telegram API отклонил или клиент не поддерживает, используем наш HTML-парсер
+    if not sent_rich_content:
         chunks = split_markdown_into_chunks(content, max_chars=3500)
         for chunk in chunks:
             formatted_html = markdown_to_telegram_html(chunk)
@@ -388,8 +504,6 @@ async def send_formatted_response(chat_id: int, reasoning: str, content: str, sh
                 clean_text = re.sub(r"<[^>]+>", "", formatted_html)
                 clean_text = html.unescape(clean_text)
                 await bot.send_message(chat_id=chat_id, text=clean_text)
-    else:
-        await bot.send_message(chat_id=chat_id, text="⚠️ Модель вернула пустой ответ.")
 
 
 # ===================== НАСТОЯЩИЕ ЦВЕТНЫЕ КНОПКИ (BOT API 9.4) =====================
