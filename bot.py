@@ -4,6 +4,7 @@ import re
 import html
 import asyncio
 import difflib
+import hashlib
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types, F
@@ -11,7 +12,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramNetworkError, TelegramBadRequest
-from aiogram.types import ReactionTypeEmoji
+from aiogram.types import ReactionTypeEmoji, InlineQueryResultArticle, InputTextMessageContent
 from aiogram.utils.chat_action import ChatActionSender
 import httpx
 from openai import AsyncOpenAI
@@ -489,6 +490,8 @@ async def cmd_help(message: types.Message):
         "  - 💡 <b>Рефакторинг SOLID</b> — пришлет скачиваемый файл и Git Diff!\n"
         "  - 📊 <b>Показать Git Diff</b> — покажет наглядное сравнение «Было / Стало»\n"
         "  - 📝 <b>Документация</b> — docstrings и описание типов\n\n"
+        "• <b>Вызов в любом чате (Inline Mode):</b>\n"
+        "Наберите в чате с коллегой <code>@имя_бота свой вопрос</code> — бот мгновенно сгенерирует сниппет или ответ и позволит отправить его в один клик!\n\n"
         "• <b>Управление:</b>\n"
         "/mode — Выбор стиля ответов\n"
         "/thinking — Показ пошаговых рассуждений AI под спойлером\n"
@@ -729,6 +732,137 @@ async def handle_message(message: types.Message):
             )
         else:
             await message.answer(f"⚠️ <b>Ошибка:</b> {html.escape(error_text)}", parse_mode=ParseMode.HTML)
+
+
+# ===================== ИНЛАЙН РЕЖИМ (@bot в любом чате) =====================
+
+@dp.inline_query()
+async def inline_query_handler(inline_query: types.InlineQuery):
+    """
+    Позволяет вызывать бота в ЛЮБОМ чате с коллегой через:
+    @bot_username <запрос>
+    Например:
+    @bot O(N) бинарный поиск
+    @bot python singleton
+    @bot что такое dead lock
+    """
+    raw_query = inline_query.query.strip()
+    results = []
+
+    if not raw_query:
+        # Быстрые подсказки / шаблоны, когда пользователь только напечатал @bot
+        hints = [
+            (
+                "⚡ Оценка сложности O(N)",
+                "Пример: @bot O(N) binary search",
+                "⚡ <b>Памятка: Оценка сложности алгоритмов $O(N)$</b>\n\n"
+                "• <b>O(1)</b> — Константная: доступ по ключу в hash map / массиву по индексу.\n"
+                "• <b>O(log N)</b> — Логарифмическая: бинарный поиск, сбалансированные деревья.\n"
+                "• <b>O(N)</b> — Линейная: один проход по списку, поиск максимума.\n"
+                "• <b>O(N log N)</b> — Квазилинейная: TimSort, MergeSort, QuickSort (avg).\n"
+                "• <b>O(N²)</b> — Квадратичная: вложенные циклы, BubbleSort.\n\n"
+                "<i>Вызовите бота с конкретным алгоритмом:</i> <code>@bot O(N) quicksort</code>"
+            ),
+            (
+                "🐍 Паттерн Python: Singleton",
+                "Быстрый сниппет потокобезопасного синглтона",
+                "🐍 <b>Python Thread-Safe Singleton:</b>\n\n"
+                "<pre><code class=\"language-python\">import threading\n\n"
+                "class Singleton:\n"
+                "    _instance = None\n"
+                "    _lock = threading.Lock()\n\n"
+                "    def __new__(cls, *args, **kwargs):\n"
+                "        if not cls._instance:\n"
+                "            with cls._lock:\n"
+                "                if not cls._instance:\n"
+                "                    cls._instance = super().__new__(cls)\n"
+                "        return cls._instance</code></pre>\n"
+                "<i>Отправлено через @AI_Companion_Bot</i>"
+            ),
+            (
+                "💡 Архитектурный совет: SOLID",
+                "Краткая памятка по принципам SOLID для коллег",
+                "🏛 <b>Принципы SOLID в разработке:</b>\n\n"
+                "• <b>S (Single Responsibility)</b> — один класс решает ровно одну задачу.\n"
+                "• <b>O (Open/Closed)</b> — открыт для расширения, закрыт для модификации.\n"
+                "• <b>L (Liskov Substitution)</b> — подкласс заменяет базовый класс без сюрпризов.\n"
+                "• <b>I (Interface Segregation)</b> — много мелких интерфейсов лучше одного раздутого.\n"
+                "• <b>D (Dependency Inversion)</b> — зависимость от абстракций, а не реализаций.\n\n"
+                "<i>Отправлено через @AI_Companion_Bot</i>"
+            ),
+        ]
+
+        for idx, (title, desc, text_content) in enumerate(hints):
+            results.append(
+                InlineQueryResultArticle(
+                    id=f"hint_{idx}",
+                    title=title,
+                    description=desc,
+                    input_message_content=InputTextMessageContent(
+                        message_text=text_content,
+                        parse_mode=ParseMode.HTML,
+                    ),
+                )
+            )
+
+        await inline_query.answer(results, cache_time=30, is_personal=True)
+        return
+
+    # Если запрос введён: обращаемся к NVIDIA Nemotron для мгновенного ответа
+    qid = hashlib.md5(raw_query.encode("utf-8")).hexdigest()[:10]
+
+    try:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Ты — Senior AI Code Companion в Telegram. "
+                    "Пользователь обратился к тебе через inline-запрос (@bot <запрос>) из группового или личного чата. "
+                    "Дай максимально полезный, точный, компактный ответ (до 1500 символов). "
+                    "Оформи красиво в Markdown (код в ```язык, акценты жирным, ключевые понятия в `code`). "
+                    "Отвечай на русском языке."
+                ),
+            },
+            {"role": "user", "content": raw_query},
+        ]
+
+        # Запрашиваем модель без рассуждений (быстрый лаконичный ответ для inline)
+        _, raw_answer = await ask_model(messages, enable_thinking=False)
+        html_answer = markdown_to_telegram_html(raw_answer)
+
+        footer = f"\n\n<i>💬 Запрос: «{html.escape(raw_query)}»</i>"
+        final_text = html_answer + footer
+
+        # Если текст слишком длинный, обрезаем безопасно
+        if len(final_text) > 4000:
+            final_text = final_text[:3950] + "\n...</i>"
+
+        results.append(
+            InlineQueryResultArticle(
+                id=f"ans_{qid}",
+                title=f"💡 Ответ AI: {raw_query[:40]}",
+                description="Отправить готовый разбор и сниппет от AI в текущий чат",
+                input_message_content=InputTextMessageContent(
+                    message_text=final_text,
+                    parse_mode=ParseMode.HTML,
+                ),
+            )
+        )
+    except Exception as e:
+        err_msg = f"⚠️ <b>Ошибка генерации:</b> <code>{html.escape(str(e))}</code>"
+        results.append(
+            InlineQueryResultArticle(
+                id=f"err_{qid}",
+                title="⚠️ Ошибка генерации ответа",
+                description=str(e)[:60],
+                input_message_content=InputTextMessageContent(
+                    message_text=err_msg,
+                    parse_mode=ParseMode.HTML,
+                ),
+            )
+        )
+
+    await inline_query.answer(results, cache_time=60, is_personal=True)
 
 
 # ===================== РЕГИСТРАЦИЯ КОМАНД И СТАРТ =====================
