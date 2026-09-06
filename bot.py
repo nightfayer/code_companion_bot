@@ -3,19 +3,20 @@ import io
 import re
 import html
 import asyncio
-from collections import defaultdict
+import difflib
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.enums import ParseMode, ChatAction
+from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramNetworkError, TelegramBadRequest
 from aiogram.types import ReactionTypeEmoji
 from aiogram.utils.chat_action import ChatActionSender
 import httpx
 from openai import AsyncOpenAI
+
+import db
 
 load_dotenv()
 
@@ -85,11 +86,6 @@ MODES = {
     },
 }
 
-user_modes = defaultdict(lambda: "mentor")
-user_thinking = defaultdict(lambda: False)
-user_history = defaultdict(list)
-last_code_cache = {}
-
 MAX_HISTORY_MESSAGES = 10
 
 SUPPORTED_EXTENSIONS = {
@@ -98,6 +94,49 @@ SUPPORTED_EXTENSIONS = {
     ".html", ".css", ".json", ".yaml", ".yml", ".md", ".txt"
 }
 
+LANG_EXTENSIONS = {
+    "python": ".py", "py": ".py",
+    "javascript": ".js", "js": ".js",
+    "typescript": ".ts", "ts": ".ts",
+    "go": ".go", "golang": ".go",
+    "rust": ".rs", "rs": ".rs",
+    "cpp": ".cpp", "c++": ".cpp", "c": ".c",
+    "java": ".java", "kotlin": ".kt", "cs": ".cs", "csharp": ".cs",
+    "sql": ".sql", "bash": ".sh", "sh": ".sh", "shell": ".sh",
+    "html": ".html", "css": ".css", "json": ".json", "yaml": ".yaml", "yml": ".yml",
+}
+
+
+# ===================== УТИЛИТЫ ДЛЯ DIFF И КОДА =====================
+
+def extract_primary_code_block(text: str) -> tuple[str, str]:
+    """Извлекает основной блок кода и его язык из ответа модели."""
+    matches = re.findall(r"```([a-zA-Z0-9_\+\-\#]*)\n?(.*?)```", text, flags=re.DOTALL)
+    if not matches:
+        return "", ""
+    best_lang, best_code = max(matches, key=lambda m: len(m[1].strip()))
+    return best_lang.strip().lower(), best_code.strip("\r\n")
+
+
+def generate_visual_diff(old_code: str, new_code: str, filename: str = "solution.py") -> str:
+    """Генерирует аккуратный unified diff («Было / Стало») для Telegram."""
+    old_lines = old_code.splitlines(keepends=True)
+    new_lines = new_code.splitlines(keepends=True)
+    diff = list(difflib.unified_diff(
+        old_lines, new_lines,
+        fromfile=f"a/{filename} (Оригинал)",
+        tofile=f"b/{filename} (Рефакторинг)",
+        n=2
+    ))
+    if not diff:
+        return ""
+    diff_text = "".join(diff)
+    if len(diff_text) > 3500:
+        diff_text = diff_text[:3500] + "\n... [diff сокращен по лимиту]"
+    return diff_text
+
+
+# ===================== ПАРСЕР MARKDOWN -> TELEGRAM HTML =====================
 
 def escape_telegram_html(s: str) -> str:
     """Telegram HTML поддерживает ТОЛЬКО &lt;, &gt;, &amp;. Кавычки ' и \" экранировать нельзя!"""
@@ -147,7 +186,7 @@ def markdown_to_telegram_html(text: str) -> str:
     # 5. Заголовки (без дублирования эмодзи)
     def format_header(m):
         header_text = m.group(1).strip()
-        if any(header_text.startswith(e) for e in ("📌", "💡", "🚀", "⚠️", "📂", "🔍", "⚡", "🧪")):
+        if any(header_text.startswith(e) for e in ("📌", "💡", "🚀", "⚠️", "📂", "🔍", "⚡", "🧪", "📊")):
             return f"<b>{header_text}</b>"
         return f"📌 <b>{header_text}</b>"
 
@@ -266,14 +305,12 @@ async def send_formatted_response(chat_id: int, reasoning: str, content: str, sh
 
     # 2. Основной ответ
     if content:
-        # Разбиваем текст по логическим блокам ДО парсинга, чтобы не рвать открытые теги
         chunks = split_markdown_into_chunks(content, max_chars=3500)
         for chunk in chunks:
             formatted_html = markdown_to_telegram_html(chunk)
             try:
                 await bot.send_message(chat_id=chat_id, text=formatted_html, parse_mode=ParseMode.HTML)
-            except TelegramBadRequest as e:
-                # В случае непредвиденного сбоя парсинга Telegram очищаем теги, чтобы не показывать сырой HTML-код
+            except TelegramBadRequest:
                 clean_text = re.sub(r"<[^>]+>", "", formatted_html)
                 clean_text = html.unescape(clean_text)
                 await bot.send_message(chat_id=chat_id, text=clean_text)
@@ -291,12 +328,15 @@ def get_code_keyboard():
             types.InlineKeyboardButton(text="⚡ Сложность O(N)", callback_data="act_complexity", style="primary"),
         ],
         [
-            types.InlineKeyboardButton(text="🧪 Unit-тесты", callback_data="act_tests", style="success"),
+            types.InlineKeyboardButton(text="🧪 Сгенерировать тесты", callback_data="act_tests", style="success"),
             types.InlineKeyboardButton(text="💡 Рефакторинг SOLID", callback_data="act_refactor", style="success"),
         ],
         [
+            types.InlineKeyboardButton(text="📊 Показать Git Diff", callback_data="act_diff", style="primary"),
             types.InlineKeyboardButton(text="📝 Документация", callback_data="act_docs"),
-            types.InlineKeyboardButton(text="🗑 Сбросить", callback_data="act_cancel", style="danger"),
+        ],
+        [
+            types.InlineKeyboardButton(text="🗑 Сбросить буфер", callback_data="act_cancel", style="danger"),
         ],
     ])
     return keyboard
@@ -312,27 +352,31 @@ def get_mode_keyboard():
     return keyboard
 
 
-# ===================== КОМАНДЫ =====================
+# ===================== КОМАНДЫ БОТА =====================
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     await set_safe_reaction(message, "⚡")
     user_id = message.from_user.id
-    mode_name = MODES[user_modes[user_id]]["title"]
-    thinking_state = "Включен ✅" if user_thinking[user_id] else "Выключен ❌"
+    mode, show_thinking = await db.get_user_settings(user_id)
+    mode_name = MODES[mode]["title"]
+    thinking_state = "Включен ✅" if show_thinking else "Выключен ❌"
 
     welcome_text = (
         "👋 <b>Добро пожаловать в Senior AI Code Companion!</b>\n\n"
         "Я ваш персональный AI-ментор по программированию на базе <code>NVIDIA Nemotron 120B</code>.\n\n"
         f"⚙️ <b>Режим работы:</b> {mode_name}\n"
-        f"🧠 <b>Показ мыслей (Thinking):</b> {thinking_state}\n\n"
-        "<b>📌 Быстрые команды:</b>\n"
-        "• /mode — Сменить режим работы бота\n"
-        "• /thinking — Вкл/выкл показ рассуждений модели\n"
-        "• /features — Новейшие фичи Telegram Bot API\n"
+        f"🧠 <b>Показ мыслей (Thinking):</b> {thinking_state}\n"
+        "💾 <b>База данных SQLite:</b> Активна (история и настройки сохраняются)\n\n"
+        "<b>📌 Доступные команды:</b>\n"
+        "• /mode — Сменить стиль и режим работы\n"
+        "• /thinking — Вкл/выкл пошаговые рассуждения модели\n"
+        "• /demo94 — Демо цветных кнопок Bot API 9.4\n"
+        "• /topics — Создать темы в чате\n"
+        "• /features — Новейшие возможности Telegram\n"
         "• /clear — Очистить память диалога\n"
         "• /help — Подробная справка\n\n"
-        "💬 <i>Просто отправьте мне вопрос текстом или пришлите файл с кодом!</i>"
+        "💬 <i>Отправьте вопрос текстом или прикрепите файл с кодом!</i>"
     )
     await message.answer(welcome_text, parse_mode=ParseMode.HTML)
 
@@ -402,8 +446,8 @@ async def cb_demo(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "act_cancel")
 async def cb_act_cancel(callback: types.CallbackQuery):
-    last_code_cache.pop(callback.from_user.id, None)
-    await callback.answer("Код удален из буфера")
+    await db.clear_code(callback.from_user.id)
+    await callback.answer("Буфер кода очищен")
     await callback.message.edit_text("🗑 <b>Код успешно удален из памяти бота.</b>", parse_mode=ParseMode.HTML)
 
 
@@ -436,16 +480,17 @@ async def cmd_help(message: types.Message):
     help_text = (
         "📚 <b>Как работать с ботом:</b>\n\n"
         "• <b>Вопросы и консультации:</b>\n"
-        "Задавайте любые вопросы по Python, JS/TS, Go, базам данных, Linux или алгоритмам. Бот помнит контекст предыдущих сообщений.\n\n"
+        "Задавайте любые вопросы по Python, JS/TS, Go, базам данных, Linux или алгоритмам. Бот помнит историю диалога навсегда благодаря SQLite базе.\n\n"
         "• <b>Анализ файлов с кодом:</b>\n"
         "Прикрепите файл (<code>.py</code>, <code>.js</code>, <code>.cpp</code> и т.д.) или пришлите код в сообщении. Появятся кнопки:\n"
         "  - 🔍 <b>Код-Ревью</b> — поиск багов, уязвимостей, edge cases\n"
         "  - ⚡ <b>Сложность O(N)</b> — точный расчет времени и памяти\n"
-        "  - 🧪 <b>Unit-тесты</b> — генерация тестового набора\n"
-        "  - 💡 <b>Рефакторинг</b> — чистый код по SOLID/DRY\n"
+        "  - 🧪 <b>Сгенерировать тесты</b> — создаст готовый скачиваемый файл <code>test_*.py</code>!\n"
+        "  - 💡 <b>Рефакторинг SOLID</b> — пришлет скачиваемый файл и Git Diff!\n"
+        "  - 📊 <b>Показать Git Diff</b> — покажет наглядное сравнение «Было / Стало»\n"
         "  - 📝 <b>Документация</b> — docstrings и описание типов\n\n"
         "• <b>Управление:</b>\n"
-        "/mode — Выбор одного из 3 стилей ответов\n"
+        "/mode — Выбор стиля ответов\n"
         "/thinking — Показ пошаговых рассуждений AI под спойлером\n"
         "/clear — Сброс памяти текущей беседы"
     )
@@ -469,11 +514,11 @@ async def cmd_mode(message: types.Message):
 async def cb_set_mode(callback: types.CallbackQuery):
     new_mode = callback.data.replace("setmode_", "")
     if new_mode in MODES:
-        user_modes[callback.from_user.id] = new_mode
+        await db.set_user_mode(callback.from_user.id, new_mode)
         title = MODES[new_mode]["title"]
         await callback.answer(f"Режим: {title}")
         await callback.message.edit_text(
-            f"✅ <b>Режим успешно изменен на:</b>\n{title}\n\n"
+            f"✅ <b>Режим сохранен в базу:</b>\n{title}\n\n"
             "Все последующие ответы будут формироваться в этом стиле.",
             parse_mode=ParseMode.HTML,
         )
@@ -482,12 +527,11 @@ async def cb_set_mode(callback: types.CallbackQuery):
 @dp.message(Command("thinking"))
 async def cmd_thinking(message: types.Message):
     user_id = message.from_user.id
-    current = user_thinking[user_id]
-    user_thinking[user_id] = not current
-    state_str = "ВКЛЮЧЕН ✅" if not current else "ВЫКЛЮЧЕН ❌"
+    new_state = await db.toggle_user_thinking(user_id)
+    state_str = "ВКЛЮЧЕН ✅" if new_state else "ВЫКЛЮЧЕН ❌"
     desc = (
         "Теперь перед каждым ответом будет выводиться блок <blockquote expandable>Ход рассуждений AI</blockquote> со всеми внутренними шагами мышления модели."
-        if not current
+        if new_state
         else "Ответы будут приходить сразу в готовом и чистом виде без внутренних монологов."
     )
     await message.answer(
@@ -500,9 +544,9 @@ async def cmd_thinking(message: types.Message):
 async def cmd_clear(message: types.Message):
     await set_safe_reaction(message, "🧹")
     user_id = message.from_user.id
-    user_history[user_id].clear()
-    last_code_cache.pop(user_id, None)
-    await message.answer("🧹 <b>Память диалога очищена!</b> Задайте новый вопрос.", parse_mode=ParseMode.HTML)
+    await db.clear_history(user_id)
+    await db.clear_code(user_id)
+    await message.answer("🧹 <b>Память диалога и буфер кода очищены в SQLite!</b> Начинаем разговор с чистого листа.", parse_mode=ParseMode.HTML)
 
 
 # ===================== ОБРАБОТКА ФАЙЛОВ И КОДА =====================
@@ -528,7 +572,7 @@ async def handle_document(message: types.Message):
     code_content = file_bytes.getvalue().decode("utf-8", errors="replace")
 
     user_id = message.from_user.id
-    last_code_cache[user_id] = code_content
+    await db.save_code(user_id, file_name, code_content)
 
     try:
         await status_msg.delete()
@@ -537,7 +581,7 @@ async def handle_document(message: types.Message):
 
     line_count = len(code_content.splitlines())
     await message.answer(
-        f"📄 Файл <b>{html.escape(file_name)}</b> ({line_count} строк) загружен.\n"
+        f"📄 Файл <b>{html.escape(file_name)}</b> ({line_count} строк) сохранен в базу.\n"
         "Выберите желаемое действие:",
         reply_markup=get_code_keyboard(),
         parse_mode=ParseMode.HTML,
@@ -547,19 +591,20 @@ async def handle_document(message: types.Message):
 @dp.callback_query(F.data.startswith("act_"))
 async def handle_code_action(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    code = last_code_cache.get(user_id)
+    orig_filename, code = await db.get_code(user_id)
 
     if not code:
-        await callback.answer("⚠️ Код не найден в памяти. Отправьте файл заново.", show_alert=True)
+        await callback.answer("⚠️ Код не найден в базе. Отправьте файл заново.", show_alert=True)
         return
 
     action = callback.data.replace("act_", "")
     prompts = {
         "review": "Проведи подробный Code Review этого кода. Раздели ответ на секции: 1. Найденные баги и уязвимости. 2. Краевые случаи (Edge Cases). 3. Рекомендации по исправлению с кодом:\n\n```\n" + code + "\n```",
         "complexity": "Оцени алгоритмическую сложность этого кода: 1. Время выполнения O(...) с подробным объяснением циклов и рекурсии. 2. Память O(...) (Space complexity). 3. Как оптимизировать алгоритм:\n\n```\n" + code + "\n```",
-        "tests": "Напиши профессиональный комплект Unit-тестов для этого кода с проверкой happy path, граничных значений и исключений:\n\n```\n" + code + "\n```",
+        "tests": "Напиши профессиональный комплект Unit-тестов для этого кода. Включи happy path, граничные значения и исключения. Обязательно оформи весь код тестов в один полный блок ```код```:\n\n```\n" + code + "\n```",
         "docs": "Напиши документацию к этому коду: подробные docstrings для всех методов/классов, описание типов параметров и возвращаемых значений, а также пример использования:\n\n```\n" + code + "\n```",
-        "refactor": "Выполни глубокий рефакторинг этого кода в соответствии с принципами SOLID, Clean Code и DRY. Покажи улучшенную версию кода и объясни каждое изменение:\n\n```\n" + code + "\n```",
+        "refactor": "Выполни глубокий рефакторинг этого кода в соответствии с принципами SOLID, Clean Code и DRY. В ответе обязательно покажи полную обновленную версию кода в блоке ```код``` и объясни каждое изменение:\n\n```\n" + code + "\n```",
+        "diff": "Сделай оптимизированную и чистую версию этого кода, исправив все баги и узкие места. Обязательно предоставь полный готовый код в блоке ```код```:\n\n```\n" + code + "\n```",
     }
 
     prompt = prompts.get(action)
@@ -569,9 +614,8 @@ async def handle_code_action(callback: types.CallbackQuery):
     await callback.answer()
     status_msg = await callback.message.answer("⚡ Senior AI анализирует код, секунду...")
 
-    mode = user_modes[user_id]
+    mode, show_thinking = await db.get_user_settings(user_id)
     sys_prompt = MODES[mode]["prompt"]
-    show_thinking = user_thinking[user_id]
 
     messages = [
         {"role": "system", "content": sys_prompt},
@@ -587,6 +631,46 @@ async def handle_code_action(callback: types.CallbackQuery):
             except Exception:
                 pass
             await send_formatted_response(callback.message.chat.id, reasoning, content, show_thinking)
+
+            # ===================== ФИЧА 2: АВТОГЕНЕРАЦИЯ СКАЧИВАЕМОГО ФАЙЛА =====================
+            lang, extracted_code = extract_primary_code_block(content)
+            if extracted_code and action in ("tests", "refactor", "diff"):
+                ext = LANG_EXTENSIONS.get(lang) or os.path.splitext(orig_filename)[1] or ".py"
+                base_name = os.path.splitext(orig_filename)[0] or "code"
+
+                if action == "tests":
+                    out_filename = f"test_{base_name}{ext}"
+                    caption = f"🧪 <b>Готовый файл Unit-тестов:</b> <code>{out_filename}</code>"
+                elif action == "refactor":
+                    out_filename = f"refactored_{base_name}{ext}"
+                    caption = f"💡 <b>Готовый файл с рефакторингом:</b> <code>{out_filename}</code>"
+                else:
+                    out_filename = f"improved_{base_name}{ext}"
+                    caption = f"📦 <b>Готовое решение:</b> <code>{out_filename}</code>"
+
+                file_bytes = extracted_code.encode("utf-8")
+                file_doc = types.BufferedInputFile(file_bytes, filename=out_filename)
+                await bot.send_document(
+                    chat_id=callback.message.chat.id,
+                    document=file_doc,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML
+                )
+
+                # ===================== ФИЧА 3: ВИЗУАЛЬНЫЙ GIT DIFF =====================
+                if action in ("refactor", "diff"):
+                    diff_text = generate_visual_diff(code, extracted_code, filename=orig_filename or "code.py")
+                    if diff_text:
+                        escaped_diff = escape_telegram_html(diff_text)
+                        diff_msg = (
+                            "📊 <b>Визуальный Git Diff («Было / Стало»):</b>\n"
+                            f"<pre><code class=\"language-diff\">{escaped_diff}</code></pre>"
+                        )
+                        await bot.send_message(
+                            chat_id=callback.message.chat.id,
+                            text=diff_msg,
+                            parse_mode=ParseMode.HTML
+                        )
     except Exception as e:
         await status_msg.edit_text(f"⚠️ Ошибка при генерации: {html.escape(str(e))}")
 
@@ -610,25 +694,20 @@ async def handle_message(message: types.Message):
 
     if is_code and len(text.strip().splitlines()) >= 3:
         await set_safe_reaction(message, "👨‍💻")
-        last_code_cache[user_id] = text
+        await db.save_code(user_id, "snippet.py", text)
         await message.answer(
-            "💻 Код принят! Выберите необходимое действие:",
+            "💻 Код сохранен в базу! Выберите необходимое действие:",
             reply_markup=get_code_keyboard(),
         )
         return
 
     # Обычный вопрос
     await set_safe_reaction(message, "👀")
-    history = user_history[user_id]
-    history.append({"role": "user", "content": text})
+    await db.add_message(user_id, "user", text)
+    history = await db.get_history(user_id, limit=MAX_HISTORY_MESSAGES)
 
-    if len(history) > MAX_HISTORY_MESSAGES:
-        history = history[-MAX_HISTORY_MESSAGES:]
-        user_history[user_id] = history
-
-    mode = user_modes[user_id]
+    mode, show_thinking = await db.get_user_settings(user_id)
     sys_prompt = MODES[mode]["prompt"]
-    show_thinking = user_thinking[user_id]
 
     full_messages = [{"role": "system", "content": sys_prompt}] + history
 
@@ -637,7 +716,7 @@ async def handle_message(message: types.Message):
         async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot, interval=4.0):
             reasoning, content = await ask_model(full_messages, enable_thinking=show_thinking)
             if content:
-                history.append({"role": "assistant", "content": content})
+                await db.add_message(user_id, "assistant", content)
             await send_formatted_response(message.chat.id, reasoning, content, show_thinking)
     except Exception as e:
         error_text = str(e)
@@ -672,6 +751,9 @@ async def main():
     if not BOT_TOKEN or BOT_TOKEN.startswith("ВСТАВЬТЕ"):
         print("❌ ОШИБКА: Пожалуйста, вставьте валидный BOT_TOKEN в файл .env!")
         return
+
+    print("💾 Инициализация базы данных SQLite...")
+    await db.init_db()
 
     print("🚀 Регистрация меню команд Telegram...")
     try:
