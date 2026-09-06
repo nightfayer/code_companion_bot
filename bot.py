@@ -49,14 +49,15 @@ client = AsyncOpenAI(
 
 # ===================== ПРАВИЛА И СТИЛИ ФОРМАТИРОВАНИЯ =====================
 FORMATTING_RULES = """
-ПРАВИЛА ОФОРМЛЕНИЯ ОТВЕТОВ (MARKDOWN ТИПОГРАФИКА):
+ПРАВИЛА ОФОРМЛЕНИЯ ОТВЕТОВ (MARKDOWN ТИПОГРАФИКА ДЛЯ TELEGRAM):
 1. Структура: Дели ответ на логические секции с аккуратными заголовками (например: '### 📌 Заголовок').
 2. Акценты: Выделяй ключевые термины, имена библиотек и главные выводы **жирным шрифтом**.
 3. Код в тексте: Имена переменных, типов, функций, методов и параметров ВСЕГДА оборачивай в `моноширинный шрифт`.
-4. Блоки кода: ВСЕГДА указывай язык программирования в начале блока (например, ```python, ```go, ```typescript, ```bash, ```sql). Код должен быть чистым и с комментариями.
+4. Блоки кода: ВСЕГДА указывай язык программирования в начале блока (например, ```python, ```javascript, ```typescript, ```go, ```sql). Код должен быть чистым и с пояснениями.
 5. Списки: Используй аккуратные маркированные списки с эмодзи-буллетами (•, ✔️, ❌, ⚡, 💡).
-6. Цитаты и сноски: Важные предупреждения, резюме или выводы оформляй в цитаты через '> Текст цитаты'.
-7. Язык: Отвечай на русском языке, живо, профессионально, без воды.
+6. ТАБЛИЦЫ СТРОГО ЗАПРЕЩЕНЫ: Telegram НЕ умеет отображать Markdown-таблицы (символы | и ---). ВМЕСТО ТАБЛИЦ оформляй сравнительные данные списком карточек с буллетами (например: '• **Ситуация:** Параллельный запуск — **Как обработать:** `Promise.all(...)`').
+7. Цитаты и сноски: Важные предупреждения, резюме или выводы оформляй в цитаты через '> Текст цитаты'.
+8. Язык: Отвечай на русском языке, живо, профессионально, без воды.
 """
 
 MODES = {
@@ -144,11 +145,63 @@ def escape_telegram_html(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def convert_markdown_tables(text: str) -> str:
+    """
+    Преобразует Markdown-таблицы (| Заголовок 1 | Заголовок 2 | ...)
+    в элегантные блоки Telegram цитат с аккуратными карточками параметров.
+    """
+    lines = text.splitlines()
+    in_table = False
+    table_lines = []
+    output_lines = []
+
+    def format_table(tbl):
+        if len(tbl) < 2:
+            return tbl
+        headers = [c.strip() for c in tbl[0].strip().strip("|").split("|")]
+        start_row = 1
+        if start_row < len(tbl) and re.match(r"^[\s\|:\-]+$", tbl[start_row].strip()):
+            start_row = 2
+        cards = []
+        for row in tbl[start_row:]:
+            if not row.strip():
+                continue
+            cells = [c.strip() for c in row.strip().strip("|").split("|")]
+            if not any(cells):
+                continue
+            row_items = []
+            for i, cell in enumerate(cells):
+                hdr = headers[i] if i < len(headers) and headers[i] else f"Параметр {i+1}"
+                row_items.append(f"<b>{hdr}:</b> {cell}")
+            cards.append("• " + " — ".join(row_items))
+        if cards:
+            return ["<blockquote>" + "\n".join(cards) + "</blockquote>"]
+        return []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 2:
+            table_lines.append(line)
+            in_table = True
+        else:
+            if in_table:
+                output_lines.extend(format_table(table_lines))
+                table_lines = []
+                in_table = False
+            output_lines.append(line)
+    if in_table:
+        output_lines.extend(format_table(table_lines))
+
+    return "\n".join(output_lines)
+
+
 def markdown_to_telegram_html(text: str) -> str:
     """
     Преобразует стандартный Markdown модели в валидный Telegram HTML:
     - Блоки кода с указанием языка <pre><code class="language-...">
     - Сворачиваемые цитаты <blockquote expandable> и обычные <blockquote>
+    - Автоматическая трансформация таблиц (| ... |) в красивые блоки с карточками
+    - Списки (- пункт или * пункт) в аккуратные буллеты (• пункт)
     - Жирный <b>, курсив <i>, зачеркнутый <s>, код <code>
     - Экранирование спецсимволов (&, <, >) без ломающих Telegram сущностей (&quot;, &#x27;)
     """
@@ -165,12 +218,12 @@ def markdown_to_telegram_html(text: str) -> str:
 
     # 2. Сохраняем блоки кода, экранируя только &, <, >
     def replace_code_block(m):
-        lang = m.group(1).strip() if m.group(1) else ""
+        raw_lang = m.group(1).strip().lower() if m.group(1) else ""
         code = m.group(2).strip("\r\n")
         escaped_code = escape_telegram_html(code)
         idx = len(code_blocks)
-        if lang:
-            tag = f'<pre><code class="language-{lang}">{escaped_code}</code></pre>'
+        if raw_lang:
+            tag = f'<pre><code class="language-{raw_lang}">{escaped_code}</code></pre>'
         else:
             tag = f'<pre>{escaped_code}</pre>'
         code_blocks.append(tag)
@@ -178,13 +231,33 @@ def markdown_to_telegram_html(text: str) -> str:
 
     text = re.sub(r"```([a-zA-Z0-9_\+\-\#]*)\n?(.*?)```", replace_code_block, text, flags=re.DOTALL)
 
-    # 3. Экранируем &, <, > в обычном тексте
+    # 3. Преобразуем Markdown таблицы до экранирования HTML
+    text = convert_markdown_tables(text)
+
+    # 4. Преобразуем маркеры списков (- пункт или * пункт) в аккуратный буллет •
+    text = re.sub(r"(?m)^[\-\*]\s+", "• ", text)
+
+    # 5. Экранируем &, <, > в обычном тексте (но защищаем уже созданные <blockquote> и <b> из таблиц)
+    # Чтобы не экранировать теги <blockquote>, временно сохраним их или аккуратно заменим
+    blockquote_blocks = []
+    def save_bq(m):
+        idx = len(blockquote_blocks)
+        blockquote_blocks.append(m.group(0))
+        return f"___TEMP_BQ_{idx}___"
+
+    text = re.sub(r"<blockquote>.*?</blockquote>", save_bq, text, flags=re.DOTALL)
+
+    # Экранируем оставшийся текст
     text = escape_telegram_html(text)
 
-    # 4. Инлайн-код `code`
+    # Возвращаем сохраненные блоки таблиц
+    for idx, bq in enumerate(blockquote_blocks):
+        text = text.replace(f"___TEMP_BQ_{idx}___", bq)
+
+    # 6. Инлайн-код `code`
     text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
 
-    # 5. Заголовки (без дублирования эмодзи)
+    # 7. Заголовки (без дублирования эмодзи)
     def format_header(m):
         header_text = m.group(1).strip()
         if any(header_text.startswith(e) for e in ("📌", "💡", "🚀", "⚠️", "📂", "🔍", "⚡", "🧪", "📊")):
@@ -193,17 +266,17 @@ def markdown_to_telegram_html(text: str) -> str:
 
     text = re.sub(r"(?m)^#{1,4}\s*(.*?)$", format_header, text)
 
-    # 6. Жирный шрифт (**text**)
+    # 8. Жирный шрифт (**text**)
     text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
 
-    # 7. Курсив (*text* или _text_)
+    # 9. Курсив (*text* или _text_)
     text = re.sub(r"(?<!\w)\*([^\*\n]+)\*(?!\w)", r"<i>\1</i>", text)
     text = re.sub(r"(?<!\w)_([^_\n]+)_(?!\w)", r"<i>\1</i>", text)
 
-    # 8. Зачеркнутый (~~text~~)
+    # 10. Зачеркнутый (~~text~~)
     text = re.sub(r"~~(.*?)~~", r"<s>\1</s>", text)
 
-    # 9. Цитаты Telegram
+    # 11. Цитаты Telegram (> текст)
     def format_bq(m):
         lines = m.group(0).splitlines()
         cleaned = [re.sub(r"^&gt;\s*", "", line) for line in lines]
@@ -212,7 +285,7 @@ def markdown_to_telegram_html(text: str) -> str:
 
     text = re.sub(r"(?m)^(?:&gt;\s*.*(?:\n|$))+", format_bq, text)
 
-    # 10. Возвращаем сохраненные блоки кода и эмодзи
+    # 12. Возвращаем сохраненные блоки кода и эмодзи
     for idx, cb in enumerate(code_blocks):
         text = text.replace(f"___CODE_BLOCK_{idx}___", cb)
 
