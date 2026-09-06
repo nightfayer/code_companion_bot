@@ -242,14 +242,23 @@ def markdown_to_telegram_html(text: str) -> str:
 
     text = re.sub(r"```([a-zA-Z0-9_\+\-\#]*)\n?(.*?)```", replace_code_block, text, flags=re.DOTALL)
 
-    # 3. Преобразуем Markdown таблицы до экранирования HTML
+    # 3. Сохраняем инлайн-код `code` до обработки курсива/жирного/экранирования
+    inline_code_blocks = []
+    def replace_inline_code(m):
+        code_content = escape_telegram_html(m.group(1))
+        idx = len(inline_code_blocks)
+        inline_code_blocks.append(f"<code>{code_content}</code>")
+        return f"___INLINE_CODE_{idx}___"
+
+    text = re.sub(r"`([^`\n]+)`", replace_inline_code, text)
+
+    # 4. Преобразуем Markdown таблицы
     text = convert_markdown_tables(text)
 
-    # 4. Преобразуем маркеры списков (- пункт или * пункт) в аккуратный буллет •
+    # 5. Преобразуем маркеры списков (- пункт или * пункт) в аккуратный буллет •
     text = re.sub(r"(?m)^[\-\*]\s+", "• ", text)
 
-    # 5. Экранируем &, <, > в обычном тексте (но защищаем уже созданные <blockquote> и <b> из таблиц)
-    # Чтобы не экранировать теги <blockquote>, временно сохраним их или аккуратно заменим
+    # 6. Экранируем &, <, > в обычном тексте (но защищаем уже созданные <blockquote> и <b> из таблиц)
     blockquote_blocks = []
     def save_bq(m):
         idx = len(blockquote_blocks)
@@ -265,9 +274,6 @@ def markdown_to_telegram_html(text: str) -> str:
     for idx, bq in enumerate(blockquote_blocks):
         text = text.replace(f"___TEMP_BQ_{idx}___", bq)
 
-    # 6. Инлайн-код `code`
-    text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
-
     # 7. Заголовки (без дублирования эмодзи)
     def format_header(m):
         header_text = m.group(1).strip()
@@ -277,8 +283,8 @@ def markdown_to_telegram_html(text: str) -> str:
 
     text = re.sub(r"(?m)^#{1,4}\s*(.*?)$", format_header, text)
 
-    # 8. Жирный шрифт (**text**)
-    text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
+    # 8. Жирный шрифт (**text**) с поддержкой многострочности и жадности
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text, flags=re.DOTALL)
 
     # 9. Курсив (*text* или _text_)
     text = re.sub(r"(?<!\w)\*([^\*\n]+)\*(?!\w)", r"<i>\1</i>", text)
@@ -290,13 +296,16 @@ def markdown_to_telegram_html(text: str) -> str:
     # 11. Цитаты Telegram (> текст)
     def format_bq(m):
         lines = m.group(0).splitlines()
-        cleaned = [re.sub(r"^&gt;\s*", "", line) for line in lines]
+        cleaned = [re.sub(r"^\s*&gt;\s*", "", line) for line in lines]
         content = "\n".join(cleaned).strip()
         return f"<blockquote>{content}</blockquote>\n"
 
     text = re.sub(r"(?m)^(?:&gt;\s*.*(?:\n|$))+", format_bq, text)
 
-    # 12. Возвращаем сохраненные блоки кода и эмодзи
+    # 12. Возвращаем сохраненные блоки кода, инлайн-кода и эмодзи
+    for idx, ic in enumerate(inline_code_blocks):
+        text = text.replace(f"___INLINE_CODE_{idx}___", ic)
+
     for idx, cb in enumerate(code_blocks):
         text = text.replace(f"___CODE_BLOCK_{idx}___", cb)
 
@@ -482,28 +491,17 @@ async def send_formatted_response(chat_id: int, reasoning: str, content: str, sh
         await bot.send_message(chat_id=chat_id, text="⚠️ Модель вернула пустой ответ.")
         return
 
-    # Пробуем отправить через нативный Rich Message 10.1
-    sent_rich_content = False
-    try:
-        rich_blocks = build_rich_blocks_from_markdown(content)
-        if rich_blocks:
-            rich_msg = types.InputRichMessage(blocks=rich_blocks)
-            await bot.send_rich_message(chat_id=chat_id, rich_message=rich_msg)
-            sent_rich_content = True
-    except Exception:
-        sent_rich_content = False
-
-    # Если Telegram API отклонил или клиент не поддерживает, используем наш HTML-парсер
-    if not sent_rich_content:
-        chunks = split_markdown_into_chunks(content, max_chars=3500)
-        for chunk in chunks:
-            formatted_html = markdown_to_telegram_html(chunk)
-            try:
-                await bot.send_message(chat_id=chat_id, text=formatted_html, parse_mode=ParseMode.HTML)
-            except TelegramBadRequest:
-                clean_text = re.sub(r"<[^>]+>", "", formatted_html)
-                clean_text = html.unescape(clean_text)
-                await bot.send_message(chat_id=chat_id, text=clean_text)
+    # Отправляем с полноценным форматированием Telegram HTML (жирный, курсив, моноширинный, цитаты, буллеты)
+    chunks = split_markdown_into_chunks(content, max_chars=3500)
+    for chunk in chunks:
+        formatted_html = markdown_to_telegram_html(chunk)
+        try:
+            await bot.send_message(chat_id=chat_id, text=formatted_html, parse_mode=ParseMode.HTML)
+        except TelegramBadRequest:
+            # Если Telegram отклонил разметку (например, незакрытый тег в коде) — отправляем безопасный чистый текст
+            clean_text = re.sub(r"<[^>]+>", "", formatted_html)
+            clean_text = html.unescape(clean_text)
+            await bot.send_message(chat_id=chat_id, text=clean_text)
 
 
 # ===================== НАСТОЯЩИЕ ЦВЕТНЫЕ КНОПКИ (BOT API 9.4) =====================
