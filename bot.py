@@ -527,16 +527,16 @@ def get_qa_keyboard():
     """Настоящие цветные инлайн-кнопки по спецификации Bot API 9.4 для QA Manual."""
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [
-            types.InlineKeyboardButton(text="📋 Тест-кейсы / Чек-лист", callback_data="act_cases", style="success"),
-            types.InlineKeyboardButton(text="🐛 Баг-репорт (Jira)", callback_data="act_bugreport", style="danger"),
+            types.InlineKeyboardButton(text="📋 Тест-кейсы", callback_data="act_cases", style="success"),
+            types.InlineKeyboardButton(text="🐛 Баг-репорт", callback_data="act_bugreport", style="danger"),
         ],
         [
-            types.InlineKeyboardButton(text="🎲 Тестовые данные", callback_data="act_data", style="primary"),
-            types.InlineKeyboardButton(text="⚠️ Граничные значения (BVA)", callback_data="act_bva", style="primary"),
+            types.InlineKeyboardButton(text="🎲 Тест-данные", callback_data="act_data", style="primary"),
+            types.InlineKeyboardButton(text="⚠️ Границы (BVA)", callback_data="act_bva", style="primary"),
         ],
         [
-            types.InlineKeyboardButton(text="🔍 Анализ ТЗ и рисков", callback_data="act_analysis", style="primary"),
-            types.InlineKeyboardButton(text="📥 Скачать CSV (TestRail)", callback_data="act_export", style="success"),
+            types.InlineKeyboardButton(text="🔍 Анализ ТЗ", callback_data="act_analysis", style="primary"),
+            types.InlineKeyboardButton(text="📥 Скачать CSV", callback_data="act_export", style="success"),
         ],
         [
             types.InlineKeyboardButton(text="🗑 Сбросить объект", callback_data="act_cancel", style="danger"),
@@ -872,24 +872,30 @@ async def handle_message(message: types.Message):
     user_id = message.from_user.id
     text = message.text
 
-    # Проверка: прислал ли пользователь описание фичи / ТЗ / форму / JSON / объект для тестирования
-    text_lower = text.lower()
-    qa_keywords = [
-        "фича", "feature", "тз", "требован", "форма", "кнопк", "эндпоинт",
-        "тестир", "чек-лист", "баг", "сценари", "страниц", "поле", "авториз",
-        "регистрац", "корзин", "валидац", "swagger", "postman", "api", "payload",
-        "input", "button", "endpoint", "login", "signup", "checkout"
-    ]
-    has_qa_keywords = any(kw in text_lower for kw in qa_keywords)
-    is_multiline_spec = (len(text.strip().splitlines()) >= 3 and (has_qa_keywords or any(c in text for c in [":", "->", "-", "*"])))
-    is_code_or_json = ("```" in text) or (text.strip().startswith("{") and text.strip().endswith("}"))
+    # Проверка: прислал ли пользователь явный объект тестирования (ТЗ / фичу / код / JSON)
+    strip_text = text.strip()
+    strip_lower = strip_text.lower()
 
-    # Если это простой короткий вопрос начинающего QA:
-    is_simple_question = text.strip().endswith("?") and len(text.strip().splitlines()) <= 2 and not is_code_or_json
+    # Явные префиксы, когда пользователь целенаправленно отправляет ТЗ или функционал на тест-дизайн:
+    spec_prefixes = (
+        "тз:", "тз ", "фича:", "фича ", "требования:", "объект:", "функционал:",
+        "спецификация:", "тестировать:", "протестируй:", "feature:", "spec:"
+    )
+    has_spec_prefix = any(strip_lower.startswith(p) for p in spec_prefixes)
 
-    if (is_multiline_spec or is_code_or_json) and not is_simple_question and len(text.strip()) >= 20:
+    # Блоки кода или структурированный многострочный JSON:
+    is_code_block = ("```" in text)
+    is_multiline_json = (strip_text.startswith("{") and strip_text.endswith("}") and "\n" in strip_text)
+
+    # Перехватываем в меню действий ТОЛЬКО при явном указании ТЗ или коде/JSON
+    if (has_spec_prefix or is_code_block or is_multiline_json) and len(strip_text) >= 15:
         await set_safe_reaction(message, "📝")
-        await db.save_code(user_id, "requirement_spec.txt", text)
+        clean_spec = strip_text
+        for p in spec_prefixes:
+            if strip_lower.startswith(p):
+                clean_spec = strip_text[len(p):].strip()
+                break
+        await db.save_code(user_id, "requirement_spec.txt", clean_spec or strip_text)
         await message.answer(
             "📋 <b>Объект тестирования сохранен в память!</b>\n\n"
             "Выберите необходимое QA-действие в меню ниже:",
