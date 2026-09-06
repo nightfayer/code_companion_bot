@@ -58,42 +58,51 @@ client = AsyncOpenAI(
     http_client=http_client,
 )
 
-# ===================== ПРАВИЛА И СТИЛИ ФОРМАТИРОВАНИЯ =====================
+# ===================== ПРАВИЛА И СТИЛИ ФОРМАТИРОВАНИЯ ДЛЯ QA =====================
 FORMATTING_RULES = """
-ПРАВИЛА ОФОРМЛЕНИЯ ОТВЕТОВ (RICH MESSAGES ДЛЯ TELEGRAM BOT API 10.1):
-1. Структура: Дели ответ на логические секции с аккуратными заголовками (например: '### 📌 Заголовок').
-2. Акценты: Выделяй ключевые термины, имена библиотек и главные выводы **жирным шрифтом**.
-3. Код в тексте: Имена переменных, типов, функций, методов и параметров ВСЕГДА оборачивай в `моноширинный шрифт`.
-4. Блоки кода: ВСЕГДА указывай язык программирования в начале блока (например, ```python, ```javascript, ```typescript, ```go, ```sql). Код должен быть чистым и с пояснениями.
-5. Таблицы: Если требуется сравнение параметров или характеристик — используй Markdown-таблицы (| Заголовок 1 | Заголовок 2 |). Бот автоматически транслирует их в нативные таблицы Telegram Bot API 10.1.
-6. Списки: Используй аккуратные маркированные списки с эмодзи-буллетами (•, ✔️, ❌, ⚡, 💡).
-7. Цитаты и сноски: Важные предупреждения, резюме или выводы оформляй в цитаты через '> Текст цитаты'.
-8. Язык: Отвечай на русском языке, живо, профессионально, без воды.
+ПРАВИЛА ОФОРМЛЕНИЯ ОТВЕТОВ ДЛЯ QA MANUAL (RICH MESSAGES ДЛЯ TELEGRAM BOT API 10.1):
+1. Структура: Дели ответ на логические секции с аккуратными заголовками (например: '### 📋 Тест-кейсы', '### 🐛 Баг-репорт').
+2. Акценты: Выделяй ключевые термины (Severity, Priority, Ожидаемый результат) **жирным шрифтом**.
+3. Тестовые данные и локаторы: URL, эндпоинты, селекторы, тестовые строки и пейлоады ВСЕГДА оборачивай в `моноширинный шрифт` или блоки ```code```.
+4. Тест-кейсы: Оформляй четко:
+   - ID и Название (Title)
+   - Тип (Позитивный / Негативный / Граничный)
+   - Предусловия (Preconditions)
+   - Шаги воспроизведения (Steps) с нумерацией 1, 2, 3
+   - Ожидаемый результат (Expected Result) — выделяй **жирным**
+5. Баг-репорты: Используй золотой стандарт 'Что? Где? При каких условиях?', указывай Severity / Priority, шаги воспроизведения, Фактический и Ожидаемый результаты.
+6. Таблицы: Если генерируешь матрицу тест-дизайна, классы эквивалентности или граничные значения — используй Markdown-таблицы (| Параметр | Валидные | Невалидные |).
+7. Списки: Используй аккуратные буллеты (•, ✔️, ❌, ⚠️, 💡).
+8. Цитаты: Важные предупреждения и замечания оформляй в цитаты через '> Текст цитаты'.
+9. Язык: Отвечай на русском языке, профессионально, дружелюбно и понятно для начинающего QA.
 """
 
 MODES = {
     "mentor": {
-        "title": "🧑‍💻 Senior Ментор (по умолчанию)",
+        "title": "🧑‍🏫 QA Mentor (Теория, тест-дизайн, собесы)",
         "prompt": (
-            "Ты — опытный, дружелюбный Senior Software Engineer и наставник. "
-            "Помогай разработчику, подробно отвечай на вопросы, объясняй концепции на пальцах. "
+            "Ты — опытный Lead QA Engineer и доброжелательный наставник для начинающего специалиста по ручному тестированию (Manual QA). "
+            "Твоя цель: помогать осваивать профессию QA с нуля. Понятно объясняй теорию тестирования (ISTQB, жизненный цикл дефекта, "
+            "виды и уровни тестирования, клиент-серверную архитектуру, DevTools, снифферы Fiddler/Charles, Postman и REST API, SQL для тестировщика). "
+            "Разбирай реальные кейсы, давай практические советы, учи грамотно мыслить как тестировщик и готовь к собеседованиям на позицию Junior QA. "
             + FORMATTING_RULES
         ),
     },
-    "reviewer": {
-        "title": "🔍 Строгий Код-Ревьюер",
+    "edge_hunter": {
+        "title": "🔍 Bug Hunter (Негативные сценарии и корнер-кейсы)",
         "prompt": (
-            "Ты — строгий Principal Code Reviewer. "
-            "Проводи аудит кода: скрытые баги, утечки ресурсов, race conditions, "
-            "оценка сложности O(N) по времени и памяти, рефакторинг по SOLID/DRY. "
+            "Ты — въедливый Senior QA Engineer, эксперт по исследовательскому тестированию, поиску неочевидных багов и нестандартных сценариев. "
+            "Твоя задача — находить самые каверзные краевые случаи (edge cases), уязвимости валидации, проблемы с concurrency, "
+            "граничные значения, спецсимволы, SQL-инъекции, XSS-строки, падения при обрыве сети и стрессовые сценарии для любого функционала. "
             + FORMATTING_RULES
         ),
     },
-    "assistant": {
-        "title": "⚡ Быстрый IT-Ассистент",
+    "fast_qa": {
+        "title": "⚡ Fast QA Tool (Быстрый генератор по ISTQB & Jira)",
         "prompt": (
-            "Ты — лаконичный и точный AI-помощник разработчика. "
-            "Давай краткие, точные ответы по коду и синтаксису без лишних вступлений. "
+            "Ты — быстрый и строгий генератор QA-артефактов. "
+            "Без лишних вступительных слов сразу выдавай готовые профессиональные тест-кейсы, чек-листы, таблицы классов эквивалентности "
+            "и баг-репорты по стандартам ISTQB и Jira. Используй четкую структуру и краткие формулировки. "
             + FORMATTING_RULES
         ),
     },
@@ -102,33 +111,40 @@ MODES = {
 MAX_HISTORY_MESSAGES = 10
 
 SUPPORTED_EXTENSIONS = {
-    ".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".cpp", ".c",
-    ".h", ".hpp", ".java", ".kt", ".cs", ".php", ".rb", ".sql", ".sh",
-    ".html", ".css", ".json", ".yaml", ".yml", ".md", ".txt"
+    ".txt", ".md", ".json", ".yaml", ".yml", ".csv", ".sql", ".html",
+    ".xml", ".log", ".py", ".js", ".ts", ".jsx", ".tsx", ".sh"
 }
 
 LANG_EXTENSIONS = {
+    "csv": ".csv", "markdown": ".md", "md": ".md", "json": ".json",
     "python": ".py", "py": ".py",
     "javascript": ".js", "js": ".js",
     "typescript": ".ts", "ts": ".ts",
-    "go": ".go", "golang": ".go",
-    "rust": ".rs", "rs": ".rs",
-    "cpp": ".cpp", "c++": ".cpp", "c": ".c",
-    "java": ".java", "kotlin": ".kt", "cs": ".cs", "csharp": ".cs",
-    "sql": ".sql", "bash": ".sh", "sh": ".sh", "shell": ".sh",
-    "html": ".html", "css": ".css", "json": ".json", "yaml": ".yaml", "yml": ".yml",
+    "sql": ".sql", "bash": ".sh", "sh": ".sh",
+    "html": ".html", "yaml": ".yaml", "yml": ".yml", "xml": ".xml",
 }
 
 
-# ===================== УТИЛИТЫ ДЛЯ DIFF И КОДА =====================
+# ===================== УТИЛИТЫ ДЛЯ ФАЙЛОВ И ТЕСТОВ =====================
 
 def extract_primary_code_block(text: str) -> tuple[str, str]:
-    """Извлекает основной блок кода и его язык из ответа модели."""
+    """Извлекает основной блок кода или данных и его язык из ответа модели."""
     matches = re.findall(r"```([a-zA-Z0-9_\+\-\#]*)\n?(.*?)```", text, flags=re.DOTALL)
     if not matches:
         return "", ""
     best_lang, best_code = max(matches, key=lambda m: len(m[1].strip()))
     return best_lang.strip().lower(), best_code.strip("\r\n")
+
+
+def extract_csv_block(text: str) -> str:
+    """Извлекает блок CSV из ответа модели для экспорта в TestRail / Qase."""
+    matches = re.findall(r"```(?:csv)?\n?(\"?ID\"?,.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+    if matches:
+        return matches[0].strip()
+    m_csv = re.findall(r"```csv\n?(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+    if m_csv:
+        return m_csv[0].strip()
+    return ""
 
 
 def generate_visual_diff(old_code: str, new_code: str, filename: str = "solution.py") -> str:
@@ -147,6 +163,7 @@ def generate_visual_diff(old_code: str, new_code: str, filename: str = "solution
     if len(diff_text) > 3500:
         diff_text = diff_text[:3500] + "\n... [diff сокращен по лимиту]"
     return diff_text
+
 
 
 # ===================== ПАРСЕР MARKDOWN -> TELEGRAM HTML =====================
@@ -504,36 +521,38 @@ async def send_formatted_response(chat_id: int, reasoning: str, content: str, sh
             await bot.send_message(chat_id=chat_id, text=clean_text)
 
 
-# ===================== НАСТОЯЩИЕ ЦВЕТНЫЕ КНОПКИ (BOT API 9.4) =====================
+# ===================== НАСТОЯЩИЕ ЦВЕТНЫЕ КНОПКИ (BOT API 9.4) ДЛЯ QA =====================
 
-def get_code_keyboard():
-    """Настоящие цветные инлайн-кнопки по спецификации Bot API 9.4."""
+def get_qa_keyboard():
+    """Настоящие цветные инлайн-кнопки по спецификации Bot API 9.4 для QA Manual."""
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [
-            types.InlineKeyboardButton(text="🔍 Код-Ревью", callback_data="act_review", style="primary"),
-            types.InlineKeyboardButton(text="⚡ Сложность O(N)", callback_data="act_complexity", style="primary"),
+            types.InlineKeyboardButton(text="📋 Тест-кейсы / Чек-лист", callback_data="act_cases", style="success"),
+            types.InlineKeyboardButton(text="🐛 Баг-репорт (Jira)", callback_data="act_bugreport", style="danger"),
         ],
         [
-            types.InlineKeyboardButton(text="🧪 Сгенерировать тесты", callback_data="act_tests", style="success"),
-            types.InlineKeyboardButton(text="💡 Рефакторинг SOLID", callback_data="act_refactor", style="success"),
+            types.InlineKeyboardButton(text="🎲 Тестовые данные", callback_data="act_data", style="primary"),
+            types.InlineKeyboardButton(text="⚠️ Граничные значения (BVA)", callback_data="act_bva", style="primary"),
         ],
         [
-            types.InlineKeyboardButton(text="📊 Показать Git Diff", callback_data="act_diff", style="primary"),
-            types.InlineKeyboardButton(text="📝 Документация", callback_data="act_docs"),
+            types.InlineKeyboardButton(text="🔍 Анализ ТЗ и рисков", callback_data="act_analysis", style="primary"),
+            types.InlineKeyboardButton(text="📥 Скачать CSV (TestRail)", callback_data="act_export", style="success"),
         ],
         [
-            types.InlineKeyboardButton(text="🗑 Сбросить буфер", callback_data="act_cancel", style="danger"),
+            types.InlineKeyboardButton(text="🗑 Сбросить объект", callback_data="act_cancel", style="danger"),
         ],
     ])
     return keyboard
+
+get_code_keyboard = get_qa_keyboard
 
 
 def get_mode_keyboard():
     """Выбор режима с цветовым разделением (зеленый / красный / синий)."""
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="🧑‍💻 Senior Ментор (Дружелюбный)", callback_data="setmode_mentor", style="success")],
-        [types.InlineKeyboardButton(text="🔍 Строгий Ревьюер (Аудит и баги)", callback_data="setmode_reviewer", style="danger")],
-        [types.InlineKeyboardButton(text="⚡ Быстрый Ассистент (Лаконичный)", callback_data="setmode_assistant", style="primary")],
+        [types.InlineKeyboardButton(text="🧑‍🏫 QA Ментор (Теория и собесы)", callback_data="setmode_mentor", style="success")],
+        [types.InlineKeyboardButton(text="🔍 Bug Hunter (Негативные и Edge Cases)", callback_data="setmode_edge_hunter", style="danger")],
+        [types.InlineKeyboardButton(text="⚡ Fast QA Tool (Быстрый генератор)", callback_data="setmode_fast_qa", style="primary")],
     ])
     return keyboard
 
@@ -545,21 +564,27 @@ async def cmd_start(message: types.Message):
     await set_safe_reaction(message, "⚡")
     user_id = message.from_user.id
     mode, show_thinking = await db.get_user_settings(user_id)
-    mode_name = MODES[mode]["title"]
+    mode_name = MODES.get(mode, MODES["mentor"])["title"]
     thinking_state = "Включен ✅" if show_thinking else "Выключен ❌"
 
     welcome_text = (
-        "👋 <b>Добро пожаловать в Senior AI Code Companion!</b>\n\n"
-        "Я ваш персональный AI-ментор по программированию на базе <code>NVIDIA Nemotron 120B</code>.\n\n"
+        "👋 <b>Добро пожаловать в QA Manual Companion!</b>\n\n"
+        "Я твой персональный AI-ментор и ассистент по ручному тестированию ПО на базе <code>NVIDIA Nemotron 120B</code>.\n\n"
         f"⚙️ <b>Режим работы:</b> {mode_name}\n"
         f"🧠 <b>Показ мыслей (Thinking):</b> {thinking_state}\n"
-        "💾 <b>База данных SQLite:</b> Активна (история и настройки сохраняются)\n\n"
+        "💾 <b>База данных SQLite:</b> Активна (история и контекст сохраняются)\n\n"
+        "<b>📌 Чем я помогу начинающему QA:</b>\n"
+        "• 📋 <b>Тест-дизайн:</b> Генерация позитивных и негативных тест-кейсов, чек-листов\n"
+        "• 🐛 <b>Баг-репорты:</b> Оформление дефектов по стандарту «Что? Где? При каких условиях?»\n"
+        "• 🎲 <b>Тестовые данные:</b> Граничные значения, спецсимволы, XSS/SQLi строки, JSON payload\n"
+        "• 📥 <b>Экспорт в TMS:</b> Скачивание готового <code>.csv</code> файла для TestRail и Qase\n"
+        "• 🧑‍🏫 <b>Теория и собеседования:</b> Понятные ответы на любые вопросы по тестированию с нуля\n\n"
         "<b>📌 Доступные команды:</b>\n"
-        "• /mode — Сменить стиль и режим работы\n"
-        "• /thinking — Вкл/выкл пошаговые рассуждения модели\n"
-        "• /clear — Очистить память диалога\n"
-        "• /help — Подробная справка\n\n"
-        "💬 <i>Отправьте вопрос текстом или прикрепите файл с кодом!</i>"
+        "• /mode — Выбрать роль (Ментор / Охотник за багами / Быстрый генератор)\n"
+        "• /thinking — Вкл/выкл пошаговые рассуждения AI\n"
+        "• /clear — Начать диалог с чистого листа\n"
+        "• /help — Подробное руководство со шпаргалками\n\n"
+        "💬 <i>Отправь описание фичи/ТЗ, форму, JSON или просто задай вопрос по QA!</i>"
     )
     await message.answer(welcome_text, parse_mode=ParseMode.HTML)
 
@@ -567,30 +592,37 @@ async def cmd_start(message: types.Message):
 @dp.callback_query(F.data == "act_cancel")
 async def cb_act_cancel(callback: types.CallbackQuery):
     await db.clear_code(callback.from_user.id)
-    await callback.answer("Буфер кода очищен")
-    await callback.message.edit_text("🗑 <b>Код успешно удален из памяти бота.</b>", parse_mode=ParseMode.HTML)
+    await callback.answer("Буфер объекта очищен")
+    await callback.message.edit_text("🗑 <b>Объект тестирования успешно удален из памяти бота.</b>", parse_mode=ParseMode.HTML)
 
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
     await set_safe_reaction(message, "💡")
     help_text = (
-        "📚 <b>Как работать с ботом:</b>\n\n"
-        "• <b>Вопросы и консультации:</b>\n"
-        "Задавайте любые вопросы по Python, JS/TS, Go, базам данных, Linux или алгоритмам. Бот помнит историю диалога навсегда благодаря SQLite базе.\n\n"
-        "• <b>Анализ файлов с кодом:</b>\n"
-        "Прикрепите файл (<code>.py</code>, <code>.js</code>, <code>.cpp</code> и т.д.) или пришлите код в сообщении. Появятся кнопки:\n"
-        "  - 🔍 <b>Код-Ревью</b> — поиск багов, уязвимостей, edge cases\n"
-        "  - ⚡ <b>Сложность O(N)</b> — точный расчет времени и памяти\n"
-        "  - 🧪 <b>Сгенерировать тесты</b> — создаст готовый скачиваемый файл <code>test_*.py</code>!\n"
-        "  - 💡 <b>Рефакторинг SOLID</b> — пришлет скачиваемый файл и Git Diff!\n"
-        "  - 📊 <b>Показать Git Diff</b> — покажет наглядное сравнение «Было / Стало»\n"
-        "  - 📝 <b>Документация</b> — docstrings и описание типов\n\n"
-        "• <b>Вызов в любом чате (Inline Mode):</b>\n"
-        "Наберите в чате с коллегой <code>@имя_бота свой вопрос</code> — бот мгновенно сгенерирует сниппет или ответ и позволит отправить его в один клик!\n\n"
-        "• <b>Управление:</b>\n"
-        "/mode — Выбор стиля ответов\n"
-        "/thinking — Показ пошаговых рассуждений AI под спойлером\n"
+        "📚 <b>Руководство по работе с QA Manual Companion:</b>\n\n"
+        "• <b>1. Обучение и теория тестирования:</b>\n"
+        "Задавай любые вопросы начинающего тестировщика:\n"
+        "  - <i>«Чем отличается Severity от Priority?»</i>\n"
+        "  - <i>«Как составить классы эквивалентности для поля возраста от 18 до 65?»</i>\n"
+        "  - <i>«Что проверять в Chrome DevTools во вкладке Network?»</i>\n"
+        "  - <i>«Объясни разницу между Smoke, Sanity и Regression тестированием»</i>\n\n"
+        "• <b>2. Тестирование фичи или требований:</b>\n"
+        "Отправь текст требований, ТЗ, описание экрана или файл (<code>.txt</code>, <code>.md</code>, <code>.json</code>, <code>.csv</code> и др.).\n"
+        "Появятся быстрые цветные кнопки:\n"
+        "  - 📋 <b>Тест-кейсы / Чек-лист</b> — полный комплект позитивных и негативных проверок\n"
+        "  - 🐛 <b>Баг-репорт (Jira)</b> — идеальный баг-репорт с шагами и фактическим/ожидаемым результатом\n"
+        "  - 🎲 <b>Тестовые данные</b> — спецсимволы, XSS, пустые строки, длинные тексты, JSON payload\n"
+        "  - ⚠️ <b>Граничные значения (BVA)</b> — таблица анализа границ и эквивалентных классов\n"
+        "  - 🔍 <b>Анализ ТЗ и рисков</b> — поиск нестыковок и вопросов к аналитику\n"
+        "  - 📥 <b>Скачать CSV (TestRail)</b> — готовый скачиваемый файл для импорта в TMS\n\n"
+        "• <b>3. Быстрый вызов в любом чате (Inline Mode):</b>\n"
+        "Введи в чате с коллегой <code>@имя_бота</code>:\n"
+        "  - Появятся интерактивные шпаргалки по HTTP-кодам, тест-дизайну и шаблону баг-репорта.\n"
+        "  - Напиши вопрос (например, <code>@имя_бота HTTP 403 vs 401</code>) и отправь ответ прямо в диалог!\n\n"
+        "• <b>4. Команды управления:</b>\n"
+        "/mode — Смена стиля и роли ассистента\n"
+        "/thinking — Отображение хода рассуждений модели\n"
         "/clear — Сброс памяти текущей беседы"
     )
     await message.answer(help_text, parse_mode=ParseMode.HTML)
@@ -600,10 +632,10 @@ async def cmd_help(message: types.Message):
 async def cmd_mode(message: types.Message):
     await set_safe_reaction(message, "⚙️")
     await message.answer(
-        "⚙️ <b>Выберите режим работы бота:</b>\n\n"
-        "• <b>Senior Ментор</b> — понятные, глубокие объяснения, дружелюбный стиль, примеры кода.\n"
-        "• <b>Строгий Ревьюер</b> — придирчивый аудит, вычисление $O(N)$, архитектурные замечания.\n"
-        "• <b>Быстрый Ассистент</b> — сверхкраткие и четкие ответы без предисловий.",
+        "⚙️ <b>Выберите режим работы QA-помощника:</b>\n\n"
+        "• 🧑‍🏫 <b>QA Ментор</b> — понятные объяснения с нуля, теория ISTQB, подготовка к собеседованиям.\n"
+        "• 🔍 <b>Bug Hunter</b> — поиск коварных корнер-кейсов, негативные сценарии, стресс-тесты.\n"
+        "• ⚡ <b>Fast QA Tool</b> — мгновенная генерация структурированных чек-листов и баг-репортов.",
         reply_markup=get_mode_keyboard(),
         parse_mode=ParseMode.HTML,
     )
@@ -612,6 +644,12 @@ async def cmd_mode(message: types.Message):
 @dp.callback_query(F.data.startswith("setmode_"))
 async def cb_set_mode(callback: types.CallbackQuery):
     new_mode = callback.data.replace("setmode_", "")
+    # Совместимость со старыми сохраненными значениями
+    if new_mode == "reviewer":
+        new_mode = "edge_hunter"
+    elif new_mode == "assistant":
+        new_mode = "fast_qa"
+
     if new_mode in MODES:
         await db.set_user_mode(callback.from_user.id, new_mode)
         title = MODES[new_mode]["title"]
@@ -645,10 +683,10 @@ async def cmd_clear(message: types.Message):
     user_id = message.from_user.id
     await db.clear_history(user_id)
     await db.clear_code(user_id)
-    await message.answer("🧹 <b>Память диалога и буфер кода очищены в SQLite!</b> Начинаем разговор с чистого листа.", parse_mode=ParseMode.HTML)
+    await message.answer("🧹 <b>Память диалога и буфер объекта очищены в SQLite!</b> Начинаем разговор с чистого листа.", parse_mode=ParseMode.HTML)
 
 
-# ===================== ОБРАБОТКА ФАЙЛОВ И КОДА =====================
+# ===================== ОБРАБОТКА ФАЙЛОВ И ТРЕБОВАНИЙ =====================
 
 @dp.message(F.document)
 async def handle_document(message: types.Message):
@@ -656,14 +694,14 @@ async def handle_document(message: types.Message):
     _, ext = os.path.splitext(file_name)
 
     if ext.lower() not in SUPPORTED_EXTENSIONS:
-        await message.answer(f"⚠️ Неподдерживаемый формат: <code>{html.escape(ext)}</code>. Отправьте файл с исходным кодом.", parse_mode=ParseMode.HTML)
+        await message.answer(f"⚠️ Неподдерживаемый формат: <code>{html.escape(ext)}</code>. Отправьте файл требований, спецификацию или данные (<code>.txt</code>, <code>.md</code>, <code>.json</code>, <code>.csv</code> и др.).", parse_mode=ParseMode.HTML)
         return
 
     if message.document.file_size and message.document.file_size > 1024 * 1024:
         await message.answer("⚠️ Файл слишком большой. Лимит — 1 МБ.")
         return
 
-    await set_safe_reaction(message, "👨‍💻")
+    await set_safe_reaction(message, "📝")
     status_msg = await message.answer(f"📥 Загрузка <code>{html.escape(file_name)}</code>...", parse_mode=ParseMode.HTML)
 
     file_bytes = io.BytesIO()
@@ -680,9 +718,9 @@ async def handle_document(message: types.Message):
 
     line_count = len(code_content.splitlines())
     await message.answer(
-        f"📄 Файл <b>{html.escape(file_name)}</b> ({line_count} строк) сохранен в базу.\n"
-        "Выберите желаемое действие:",
-        reply_markup=get_code_keyboard(),
+        f"📄 Объект тестирования <b>{html.escape(file_name)}</b> ({line_count} строк) сохранен в базу.\n"
+        "Выберите желаемое QA-действие:",
+        reply_markup=get_qa_keyboard(),
         parse_mode=ParseMode.HTML,
     )
 
@@ -693,17 +731,85 @@ async def handle_code_action(callback: types.CallbackQuery):
     orig_filename, code = await db.get_code(user_id)
 
     if not code:
-        await callback.answer("⚠️ Код не найден в базе. Отправьте файл заново.", show_alert=True)
+        await callback.answer("⚠️ Объект тестирования не найден в базе. Отправьте файл или ТЗ заново.", show_alert=True)
         return
 
     action = callback.data.replace("act_", "")
+    legacy_map = {
+        "review": "analysis",
+        "tests": "cases",
+        "complexity": "bva",
+        "docs": "data",
+        "refactor": "bugreport",
+        "diff": "export",
+    }
+    action = legacy_map.get(action, action)
+
     prompts = {
-        "review": "Проведи подробный Code Review этого кода. Раздели ответ на секции: 1. Найденные баги и уязвимости. 2. Краевые случаи (Edge Cases). 3. Рекомендации по исправлению с кодом:\n\n```\n" + code + "\n```",
-        "complexity": "Оцени алгоритмическую сложность этого кода: 1. Время выполнения O(...) с подробным объяснением циклов и рекурсии. 2. Память O(...) (Space complexity). 3. Как оптимизировать алгоритм:\n\n```\n" + code + "\n```",
-        "tests": "Напиши профессиональный комплект Unit-тестов для этого кода. Включи happy path, граничные значения и исключения. Обязательно оформи весь код тестов в один полный блок ```код```:\n\n```\n" + code + "\n```",
-        "docs": "Напиши документацию к этому коду: подробные docstrings для всех методов/классов, описание типов параметров и возвращаемых значений, а также пример использования:\n\n```\n" + code + "\n```",
-        "refactor": "Выполни глубокий рефакторинг этого кода в соответствии с принципами SOLID, Clean Code и DRY. В ответе обязательно покажи полную обновленную версию кода в блоке ```код``` и объясни каждое изменение:\n\n```\n" + code + "\n```",
-        "diff": "Сделай оптимизированную и чистую версию этого кода, исправив все баги и узкие места. Обязательно предоставь полный готовый код в блоке ```код```:\n\n```\n" + code + "\n```",
+        "cases": (
+            "Ты — ведущий QA Engineer. На основе следующего объекта (требования/функционал/код) "
+            "составь профессиональный набор тест-кейсов и чек-лист для ручного тестирования:\n"
+            "1. 🟢 Позитивные проверки (Happy Path)\n"
+            "2. 🔴 Негативные проверки (невалидные данные, спецсимволы, пустые поля, лимиты)\n"
+            "3. ⚠️ Граничные значения\n"
+            "4. 🔒 Базовые проверки безопасности и прав доступа (если применимо)\n\n"
+            "Каждый тест-кейс оформляй со структурой:\n"
+            "- **ID**: TC-01\n"
+            "- **Название**: Краткая цель проверки\n"
+            "- **Предусловия**: Необходимое начальное состояние\n"
+            "- **Шаги воспроизведения**: 1, 2, 3...\n"
+            "- **Ожидаемый результат**: Четкое ожидаемое поведение (выдели **жирным**)\n\n"
+            "В конце ответа ОБЯЗАТЕЛЬНО сформируй блок ```csv ... ``` с компактными тест-кейсами для скачивания.\n\n"
+            "Объект тестирования:\n```\n" + code + "\n```"
+        ),
+        "bugreport": (
+            "Ты — Senior QA Engineer. Составь исчерпывающий, профессиональный баг-репорт (Bug Report) "
+            "по дефекту в данном функционале (или если в тексте описана проблема — оформи ее в идеальный отчет):\n\n"
+            "1. 📌 **Summary (Заголовок)** по золотому стандарту 'Что? Где? При каких условиях?'\n"
+            "2. ⚡ **Severity & Priority**: Выбери уровень (Blocker / Critical / Major / Minor) и обоснуй\n"
+            "3. 💻 **Environment (Окружение)**: OS, Browser/Device, Version\n"
+            "4. 🚪 **Preconditions (Предусловия)**: Начальное состояние системы и тестовый аккаунт\n"
+            "5. 👣 **Steps to Reproduce (Шаги воспроизведения)**: 1, 2, 3...\n"
+            "6. ❌ **Actual Result (Фактический результат)**: Что произошло ошибочно\n"
+            "7. ✔️ **Expected Result (Ожидаемый результат)**: Как система должна работать по ТЗ\n"
+            "8. 📎 **Attachments & Workaround**: Что приложить (скриншот, HAR-файл, логи) и есть ли обходной путь\n\n"
+            "Объект тестирования:\n```\n" + code + "\n```"
+        ),
+        "data": (
+            "Ты — эксперт по тестированию данных и безопасности. "
+            "Сгенерируй всесторонний набор тестовых данных (Test Data) для проверки этой формы/поля/API:\n"
+            "1. 🟢 **Валидные данные** (типичные значения, минимальная и максимальная длина, допустимые спецсимволы)\n"
+            "2. 🔴 **Невалидные данные** (превышение лимита, пробелы в начале/конце, табы, эмодзи, переполнение int)\n"
+            "3. 💣 **Строки для проверок безопасности** (XSS-векторы, SQL-инъекции, спецсимволы HTML/URL, кавычки)\n"
+            "4. 📦 **Готовый JSON Payload** (если применимо для REST API)\n\n"
+            "Оформляй все тестовые строки в моноширинном виде `значение` или в блоках ```код```, "
+            "чтобы тестировщик мог скопировать их в 1 клик.\n\n"
+            "Объект тестирования:\n```\n" + code + "\n```"
+        ),
+        "bva": (
+            "Ты — эксперт по техникам тест-дизайна. Примени к данному объекту Equivalence Partitioning и BVA:\n"
+            "1. 📐 **Классы эквивалентности**: разбей входные данные на валидные и невалидные классы.\n"
+            "2. ⚠️ **Анализ граничных значений (BVA)**: определи границы диапазонов (Min-1, Min, Min+1, Max-1, Max, Max+1).\n"
+            "3. 📊 **Сводная таблица**: оформи результат в наглядную Markdown-таблицу:\n"
+            "| Поле/Параметр | Класс эквивалентности | Тестовое значение | Тип (Валид/Невалид) | Ожидаемый результат |\n\n"
+            "Объект тестирования:\n```\n" + code + "\n```"
+        ),
+        "analysis": (
+            "Ты — Senior QA Lead. Проведи анализ требований / ТЗ к этому объекту на тестируемость (Requirements Review):\n"
+            "1. ❓ **Пробелы и неясности в ТЗ**: что не описано, какие сценарии забыли упомянуть?\n"
+            "2. ⚠️ **Потенциальные риски**: где чаще всего будут возникать ошибки (UX, интеграции, валидация)?\n"
+            "3. 💡 **Вопросы к аналитику / разработчику**: список конкретных вопросов для уточнения требований до релиза.\n\n"
+            "Объект тестирования:\n```\n" + code + "\n```"
+        ),
+        "export": (
+            "Ты — QA инженер. На основе этого объекта сгенерируй готовый валидный CSV файл для импорта в TestRail / Qase TMS.\n"
+            "ОБЯЗАТЕЛЬНО выведи результат в блоке ```csv\n"
+            "\"ID\",\"Title\",\"Type\",\"Preconditions\",\"Steps\",\"Expected Result\",\"Priority\"\n"
+            "...тест-кейсы...\n"
+            "```\n"
+            "Составь не менее 6-8 подробных кейсов (позитивные, негативные, граничные). Кавычки экранируй удвоением.\n\n"
+            "Объект тестирования:\n```\n" + code + "\n```"
+        ),
     }
 
     prompt = prompts.get(action)
@@ -711,10 +817,10 @@ async def handle_code_action(callback: types.CallbackQuery):
         return
 
     await callback.answer()
-    status_msg = await callback.message.answer("⚡ Senior AI анализирует код, секунду...")
+    status_msg = await callback.message.answer("⚡ QA-Ассистент анализирует объект, секунду...")
 
     mode, show_thinking = await db.get_user_settings(user_id)
-    sys_prompt = MODES[mode]["prompt"]
+    sys_prompt = MODES.get(mode, MODES["mentor"])["prompt"]
 
     messages = [
         {"role": "system", "content": sys_prompt},
@@ -722,7 +828,6 @@ async def handle_code_action(callback: types.CallbackQuery):
     ]
 
     try:
-        # Непрерывная анимация «печатает...» каждые 4 секунды до отправки сообщения
         async with ChatActionSender.typing(chat_id=callback.message.chat.id, bot=bot, interval=4.0):
             reasoning, content = await ask_model(messages, enable_thinking=show_thinking)
             try:
@@ -731,47 +836,33 @@ async def handle_code_action(callback: types.CallbackQuery):
                 pass
             await send_formatted_response(callback.message.chat.id, reasoning, content, show_thinking)
 
-            # ===================== ФИЧА 2: АВТОГЕНЕРАЦИЯ СКАЧИВАЕМОГО ФАЙЛА =====================
-            lang, extracted_code = extract_primary_code_block(content)
-            if extracted_code and action in ("tests", "refactor", "diff"):
-                ext = LANG_EXTENSIONS.get(lang) or os.path.splitext(orig_filename)[1] or ".py"
-                base_name = os.path.splitext(orig_filename)[0] or "code"
+            # ===================== АВТОГЕНЕРАЦИЯ СКАЧИВАЕМОГО ФАЙЛА =====================
+            csv_content = extract_csv_block(content)
+            base_name = os.path.splitext(orig_filename)[0] or "feature"
 
-                if action == "tests":
-                    out_filename = f"test_{base_name}{ext}"
-                    caption = f"🧪 <b>Готовый файл Unit-тестов:</b> <code>{out_filename}</code>"
-                elif action == "refactor":
-                    out_filename = f"refactored_{base_name}{ext}"
-                    caption = f"💡 <b>Готовый файл с рефакторингом:</b> <code>{out_filename}</code>"
-                else:
-                    out_filename = f"improved_{base_name}{ext}"
-                    caption = f"📦 <b>Готовое решение:</b> <code>{out_filename}</code>"
-
-                file_bytes = extracted_code.encode("utf-8")
-                file_doc = types.BufferedInputFile(file_bytes, filename=out_filename)
+            if csv_content and action in ("export", "cases"):
+                csv_filename = f"test_cases_{base_name}.csv"
+                file_bytes = csv_content.encode("utf-8-sig")  # utf-8-sig для отличного открытия в Excel / Windows
+                file_doc = types.BufferedInputFile(file_bytes, filename=csv_filename)
                 await bot.send_document(
                     chat_id=callback.message.chat.id,
                     document=file_doc,
-                    caption=caption,
+                    caption=f"📥 <b>Готовый CSV для TestRail / Qase:</b> <code>{csv_filename}</code>",
                     parse_mode=ParseMode.HTML
                 )
-
-                # ===================== ФИЧА 3: ВИЗУАЛЬНЫЙ GIT DIFF =====================
-                if action in ("refactor", "diff"):
-                    diff_text = generate_visual_diff(code, extracted_code, filename=orig_filename or "code.py")
-                    if diff_text:
-                        escaped_diff = escape_telegram_html(diff_text)
-                        diff_msg = (
-                            "📊 <b>Визуальный Git Diff («Было / Стало»):</b>\n"
-                            f"<pre><code class=\"language-diff\">{escaped_diff}</code></pre>"
-                        )
-                        await bot.send_message(
-                            chat_id=callback.message.chat.id,
-                            text=diff_msg,
-                            parse_mode=ParseMode.HTML
-                        )
+            elif action == "cases":
+                # Отправляем полный чек-лист в Markdown формате
+                md_filename = f"checklist_{base_name}.md"
+                file_bytes = content.encode("utf-8")
+                file_doc = types.BufferedInputFile(file_bytes, filename=md_filename)
+                await bot.send_document(
+                    chat_id=callback.message.chat.id,
+                    document=file_doc,
+                    caption=f"📋 <b>Скачать чек-лист / тест-кейсы:</b> <code>{md_filename}</code>",
+                    parse_mode=ParseMode.HTML
+                )
     except Exception as e:
-        await status_msg.edit_text(f"⚠️ Ошибка при генерации: {html.escape(str(e))}")
+        await status_msg.edit_text(f"⚠️ Ошибка при анализе: {html.escape(str(e))}")
 
 
 # ===================== ОБЫЧНЫЙ ЧАТ =====================
@@ -781,32 +872,39 @@ async def handle_message(message: types.Message):
     user_id = message.from_user.id
     text = message.text
 
-    # Проверка на отправку кода текстом
-    is_code = (
-        ("```" in text)
-        or ("def " in text and ":" in text)
-        or ("class " in text and ":" in text)
-        or ("function" in text and "{" in text)
-        or ("import " in text and "\n" in text)
-        or ("{" in text and "}" in text and ";" in text)
-    )
+    # Проверка: прислал ли пользователь описание фичи / ТЗ / форму / JSON / объект для тестирования
+    text_lower = text.lower()
+    qa_keywords = [
+        "фича", "feature", "тз", "требован", "форма", "кнопк", "эндпоинт",
+        "тестир", "чек-лист", "баг", "сценари", "страниц", "поле", "авториз",
+        "регистрац", "корзин", "валидац", "swagger", "postman", "api", "payload",
+        "input", "button", "endpoint", "login", "signup", "checkout"
+    ]
+    has_qa_keywords = any(kw in text_lower for kw in qa_keywords)
+    is_multiline_spec = (len(text.strip().splitlines()) >= 3 and (has_qa_keywords or any(c in text for c in [":", "->", "-", "*"])))
+    is_code_or_json = ("```" in text) or (text.strip().startswith("{") and text.strip().endswith("}"))
 
-    if is_code and len(text.strip().splitlines()) >= 3:
-        await set_safe_reaction(message, "👨‍💻")
-        await db.save_code(user_id, "snippet.py", text)
+    # Если это простой короткий вопрос начинающего QA:
+    is_simple_question = text.strip().endswith("?") and len(text.strip().splitlines()) <= 2 and not is_code_or_json
+
+    if (is_multiline_spec or is_code_or_json) and not is_simple_question and len(text.strip()) >= 20:
+        await set_safe_reaction(message, "📝")
+        await db.save_code(user_id, "requirement_spec.txt", text)
         await message.answer(
-            "💻 Код сохранен в базу! Выберите необходимое действие:",
-            reply_markup=get_code_keyboard(),
+            "📋 <b>Объект тестирования сохранен в память!</b>\n\n"
+            "Выберите необходимое QA-действие в меню ниже:",
+            reply_markup=get_qa_keyboard(),
+            parse_mode=ParseMode.HTML,
         )
         return
 
-    # Обычный вопрос
+    # Обычный вопрос или консультация по QA
     await set_safe_reaction(message, "👀")
     await db.add_message(user_id, "user", text)
     history = await db.get_history(user_id, limit=MAX_HISTORY_MESSAGES)
 
     mode, show_thinking = await db.get_user_settings(user_id)
-    sys_prompt = MODES[mode]["prompt"]
+    sys_prompt = MODES.get(mode, MODES["mentor"])["prompt"]
 
     full_messages = [{"role": "system", "content": sys_prompt}] + history
 
@@ -838,53 +936,62 @@ async def inline_query_handler(inline_query: types.InlineQuery):
     Позволяет вызывать бота в ЛЮБОМ чате с коллегой через:
     @bot_username <запрос>
     Например:
-    @bot O(N) бинарный поиск
-    @bot python singleton
-    @bot что такое dead lock
+    @bot HTTP 401 vs 403
+    @bot баг-репорт корзина
+    @bot чек-лист формы логина
     """
     raw_query = inline_query.query.strip()
     results = []
 
     if not raw_query:
-        # Быстрые подсказки / шаблоны, когда пользователь только напечатал @bot
+        # Быстрые шпаргалки для QA, когда пользователь только напечатал @bot
         hints = [
             (
-                "⚡ Оценка сложности O(N)",
-                "Пример: @bot O(N) binary search",
-                "⚡ <b>Памятка: Оценка сложности алгоритмов $O(N)$</b>\n\n"
-                "• <b>O(1)</b> — Константная: доступ по ключу в hash map / массиву по индексу.\n"
-                "• <b>O(log N)</b> — Логарифмическая: бинарный поиск, сбалансированные деревья.\n"
-                "• <b>O(N)</b> — Линейная: один проход по списку, поиск максимума.\n"
-                "• <b>O(N log N)</b> — Квазилинейная: TimSort, MergeSort, QuickSort (avg).\n"
-                "• <b>O(N²)</b> — Квадратичная: вложенные циклы, BubbleSort.\n\n"
-                "<i>Вызовите бота с конкретным алгоритмом:</i> <code>@bot O(N) quicksort</code>"
+                "🌐 Шпаргалка: HTTP-коды ответов API",
+                "200, 201, 400, 401, 403, 404, 422, 500, 502",
+                "🌐 <b>Шпаргалка QA: Основные HTTP-коды REST API</b>\n\n"
+                "• <b>200 OK</b> — Успешный запрос с телом ответа\n"
+                "• <b>201 Created</b> — Ресурс успешно создан (POST)\n"
+                "• <b>204 No Content</b> — Успешно, но тела ответа нет (DELETE)\n"
+                "• <b>400 Bad Request</b> — Ошибка валидации параметров клиентом\n"
+                "• <b>401 Unauthorized</b> — Не авторизован (нет токена/куки)\n"
+                "• <b>403 Forbidden</b> — Авторизован, но нет прав на действие\n"
+                "• <b>404 Not Found</b> — Эндпоинт или ресурс не найден\n"
+                "• <b>422 Unprocessable</b> — Семантическая ошибка валидации\n"
+                "• <b>500 Internal Error</b> — Необработанное исключение бэкенда\n"
+                "• <b>502 / 504 Gateway</b> — Сервер за шлюзом/прокси недоступен\n\n"
+                "<i>Отправлено через QA Manual Companion</i>"
             ),
             (
-                "🐍 Паттерн Python: Singleton",
-                "Быстрый сниппет потокобезопасного синглтона",
-                "🐍 <b>Python Thread-Safe Singleton:</b>\n\n"
-                "<pre><code class=\"language-python\">import threading\n\n"
-                "class Singleton:\n"
-                "    _instance = None\n"
-                "    _lock = threading.Lock()\n\n"
-                "    def __new__(cls, *args, **kwargs):\n"
-                "        if not cls._instance:\n"
-                "            with cls._lock:\n"
-                "                if not cls._instance:\n"
-                "                    cls._instance = super().__new__(cls)\n"
-                "        return cls._instance</code></pre>\n"
-                "<i>Отправлено через @AI_Companion_Bot</i>"
+                "🐛 Шаблон идеального баг-репорта",
+                "Золотой стандарт оформления дефектов для Jira",
+                "🐛 <b>Шаблон идеального баг-репорта (Jira / YouTrack):</b>\n\n"
+                "<b>📌 Title (Что? Где? Когда?):</b>\n"
+                "<code>[Авторизация] Ошибка 500 при вводе спецсимволов в поле Email</code>\n\n"
+                "• <b>Severity:</b> Major | <b>Priority:</b> High\n"
+                "• <b>Environment:</b> Chrome 124, Windows 11, стенд Staging\n"
+                "• <b>Preconditions:</b> Пользователь не авторизован\n"
+                "• <b>Steps to Reproduce:</b>\n"
+                "  1. Открыть страницу /login\n"
+                "  2. В поле Email ввести: <code>test'--@mail.com</code>\n"
+                "  3. Нажать кнопку «Войти»\n"
+                "• <b>Actual Result:</b> Отображается белый экран и ошибка 500\n"
+                "• <b>Expected Result:</b> Валидационное сообщение «Неверный формат email»\n\n"
+                "<i>Отправлено через QA Manual Companion</i>"
             ),
             (
-                "💡 Архитектурный совет: SOLID",
-                "Краткая памятка по принципам SOLID для коллег",
-                "🏛 <b>Принципы SOLID в разработке:</b>\n\n"
-                "• <b>S (Single Responsibility)</b> — один класс решает ровно одну задачу.\n"
-                "• <b>O (Open/Closed)</b> — открыт для расширения, закрыт для модификации.\n"
-                "• <b>L (Liskov Substitution)</b> — подкласс заменяет базовый класс без сюрпризов.\n"
-                "• <b>I (Interface Segregation)</b> — много мелких интерфейсов лучше одного раздутого.\n"
-                "• <b>D (Dependency Inversion)</b> — зависимость от абстракций, а не реализаций.\n\n"
-                "<i>Отправлено через @AI_Companion_Bot</i>"
+                "📐 Тест-дизайн: BVA & Классы эквивалентности",
+                "Памятка по граничным значениям с примером",
+                "📐 <b>Тест-дизайн: Классы эквивалентности и BVA</b>\n\n"
+                "<i>Пример: Поле 'Возраст' принимает от 18 до 65 лет включительно.</i>\n\n"
+                "• <b>Классы эквивалентности:</b>\n"
+                "  - Невалидный (&lt; 18)\n"
+                "  - Валидный (18 .. 65)\n"
+                "  - Невалидный (&gt; 65)\n\n"
+                "• <b>Граничные значения (BVA):</b>\n"
+                "  - Нижняя граница: <code>17</code> (невалид), <code>18</code> (валид), <code>19</code> (валид)\n"
+                "  - Верхняя граница: <code>64</code> (валид), <code>65</code> (валид), <code>66</code> (невалид)\n\n"
+                "<i>Отправлено через QA Manual Companion</i>"
             ),
         ]
 
@@ -904,7 +1011,7 @@ async def inline_query_handler(inline_query: types.InlineQuery):
         await inline_query.answer(results, cache_time=30, is_personal=True)
         return
 
-    # Если запрос введён: обращаемся к NVIDIA Nemotron для мгновенного ответа
+    # Если запрос введён: обращаемся к модели для ответа по QA
     qid = hashlib.md5(raw_query.encode("utf-8")).hexdigest()[:10]
 
     try:
@@ -912,32 +1019,30 @@ async def inline_query_handler(inline_query: types.InlineQuery):
             {
                 "role": "system",
                 "content": (
-                    "Ты — Senior AI Code Companion в Telegram. "
+                    "Ты — Senior QA Manual Companion в Telegram. "
                     "Пользователь обратился к тебе через inline-запрос (@bot <запрос>) из группового или личного чата. "
-                    "Дай максимально полезный, точный, компактный ответ (до 1500 символов). "
-                    "Оформи красиво в Markdown (код в ```язык, акценты жирным, ключевые понятия в `code`). "
+                    "Дай максимально полезный, структурированный и понятный ответ для специалиста по ручному тестированию (до 1500 символов). "
+                    "Оформи красиво в Markdown (акценты жирным, ключевые понятия и локаторы в `code`). "
                     "Отвечай на русском языке."
                 ),
             },
             {"role": "user", "content": raw_query},
         ]
 
-        # Запрашиваем модель без рассуждений (быстрый лаконичный ответ для inline)
         _, raw_answer = await ask_model(messages, enable_thinking=False)
         html_answer = markdown_to_telegram_html(raw_answer)
 
-        footer = f"\n\n<i>💬 Запрос: «{html.escape(raw_query)}»</i>"
+        footer = f"\n\n<i>💬 QA Запрос: «{html.escape(raw_query)}»</i>"
         final_text = html_answer + footer
 
-        # Если текст слишком длинный, обрезаем безопасно
         if len(final_text) > 4000:
             final_text = final_text[:3950] + "\n...</i>"
 
         results.append(
             InlineQueryResultArticle(
                 id=f"ans_{qid}",
-                title=f"💡 Ответ AI: {raw_query[:40]}",
-                description="Отправить готовый разбор и сниппет от AI в текущий чат",
+                title=f"💡 QA Разбор: {raw_query[:40]}",
+                description="Отправить структурированный ответ от QA-эксперта в текущий чат",
                 input_message_content=InputTextMessageContent(
                     message_text=final_text,
                     parse_mode=ParseMode.HTML,
@@ -966,10 +1071,10 @@ async def inline_query_handler(inline_query: types.InlineQuery):
 async def setup_bot_commands():
     commands = [
         types.BotCommand(command="start", description="🚀 Перезапуск / Статус"),
-        types.BotCommand(command="mode", description="⚙️ Выбрать режим работы"),
+        types.BotCommand(command="mode", description="⚙️ Выбрать режим QA-помощника"),
         types.BotCommand(command="thinking", description="🧠 Вкл/выкл показ рассуждений AI"),
         types.BotCommand(command="clear", description="🧹 Очистить контекст диалога"),
-        types.BotCommand(command="help", description="📚 Справка и примеры"),
+        types.BotCommand(command="help", description="📚 Справка и примеры для QA"),
     ]
     await bot.set_my_commands(commands)
 
@@ -988,7 +1093,7 @@ async def main():
     except Exception as e:
         print(f"Предупреждение при регистрации команд: {e}")
 
-    print("🚀 Senior AI Code Companion готов к работе!")
+    print("🚀 QA Manual Companion готов к работе!")
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
@@ -1004,3 +1109,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
