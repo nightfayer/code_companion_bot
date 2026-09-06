@@ -445,9 +445,6 @@ async def cmd_start(message: types.Message):
         "<b>📌 Доступные команды:</b>\n"
         "• /mode — Сменить стиль и режим работы\n"
         "• /thinking — Вкл/выкл пошаговые рассуждения модели\n"
-        "• /demo94 — Демо цветных кнопок Bot API 9.4\n"
-        "• /topics — Создать темы в чате\n"
-        "• /features — Новейшие возможности Telegram\n"
         "• /clear — Очистить память диалога\n"
         "• /help — Подробная справка\n\n"
         "💬 <i>Отправьте вопрос текстом или прикрепите файл с кодом!</i>"
@@ -455,97 +452,11 @@ async def cmd_start(message: types.Message):
     await message.answer(welcome_text, parse_mode=ParseMode.HTML)
 
 
-@dp.message(Command("features"))
-async def cmd_features(message: types.Message):
-    """Демонстрация последних фич Telegram Bot API."""
-    await set_safe_reaction(message, "🔥")
-    features_text = (
-        "🚀 <b>Главные фичи Telegram Bot API 9.4 (2024–2026):</b>\n\n"
-        "1. <b>Настоящие цветные кнопки (style):</b>\n"
-        "Попробуйте команду /demo94 — Telegram официально добавил стили <code>danger</code> (красный), <code>success</code> (зеленый) и <code>primary</code> (синий)!\n\n"
-        "2. <b>Сворачиваемые цитаты (Expandable Blockquotes):</b>\n"
-        "<blockquote expandable>Нажмите на этот блок! Он аккуратно сворачивается и разворачивается. В такие блоки наш бот прячет длинные рассуждения и детальные лог-файлы, чтобы не загромождать чат.</blockquote>\n\n"
-        "3. <b>Реакции бота на сообщения (Bot Reactions):</b>\n"
-        "Бот может ставить эмодзи-реакции на ваши сообщения (обратите внимание на реакцию 🔥 над этой командой)!\n\n"
-        "4. <b>Темы (Topics) прямо в диалогах:</b>\n"
-        "Команда /topics демонстрирует создание топиков методом <code>createForumTopic</code>.\n\n"
-        "5. <b>Подсветка синтаксиса и копирование кода:</b>\n"
-        "<pre><code class=\"language-python\">def solve_problem(code: str):\n"
-        "    return 'Багов нет! $O(1)$'</code></pre>\n"
-        "6. <b>Премиум эмодзи без Fragment:</b>\n"
-        "Если у владельца бота есть Telegram Premium, бот может присылать кастомные анимированные эмодзи в тексте и кнопках!"
-    )
-    await message.answer(features_text, parse_mode=ParseMode.HTML)
-
-
-@dp.message(Command("demo94"))
-async def cmd_demo94(message: types.Message):
-    """Демонстрация цветных кнопок Bot API 9.4 из статьи на Хабре."""
-    await set_safe_reaction(message, "🔥")
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[
-        [
-            types.InlineKeyboardButton(text="🔴 Опасное действие (danger)", callback_data="demo_danger", style="danger"),
-            types.InlineKeyboardButton(text="🟢 Успешное действие (success)", callback_data="demo_success", style="success"),
-        ],
-        [
-            types.InlineKeyboardButton(text="🔵 Основное действие (primary)", callback_data="demo_primary", style="primary"),
-            types.InlineKeyboardButton(text="⚪ Стандартная серая", callback_data="demo_default"),
-        ],
-    ])
-    demo_text = (
-        "🎨 <b>Демонстрация Telegram Bot API 9.4:</b>\n\n"
-        "В этом сообщении используются <b>настоящие цветные кнопки</b> (поле <code>style</code>):\n"
-        "• 🔴 <code>danger</code> — красная кнопка\n"
-        "• 🟢 <code>success</code> — зелёная кнопка\n"
-        "• 🔵 <code>primary</code> — синяя кнопка\n"
-        "• ⚪ <i>default</i> — стандартная серая кнопка\n\n"
-        "Нажмите любую кнопку ниже для интерактивного ответа:"
-    )
-    await message.answer(demo_text, reply_markup=kb, parse_mode=ParseMode.HTML)
-
-
-@dp.callback_query(F.data.startswith("demo_"))
-async def cb_demo(callback: types.CallbackQuery):
-    kind = callback.data.replace("demo_", "")
-    descriptions = {
-        "danger": "🔴 Вы нажали кнопку со стилем <b>danger</b> (красный цвет в клиентах 9.4).",
-        "success": "🟢 Вы нажали кнопку со стилем <b>success</b> (зелёный цвет в клиентах 9.4).",
-        "primary": "🔵 Вы нажали кнопку со стилем <b>primary</b> (синий цвет в клиентах 9.4).",
-        "default": "⚪ Вы нажали стандартную прозрачно-серую кнопку.",
-    }
-    msg = descriptions.get(kind, "Кнопка нажата!")
-    await callback.answer(f"Стиль: {kind}")
-    await callback.message.reply(msg, parse_mode=ParseMode.HTML)
-
-
 @dp.callback_query(F.data == "act_cancel")
 async def cb_act_cancel(callback: types.CallbackQuery):
     await db.clear_code(callback.from_user.id)
     await callback.answer("Буфер кода очищен")
     await callback.message.edit_text("🗑 <b>Код успешно удален из памяти бота.</b>", parse_mode=ParseMode.HTML)
-
-
-@dp.message(Command("topics"))
-async def cmd_topics(message: types.Message):
-    """Создание тем (Topics) в чате (Bot API 9.4)."""
-    await set_safe_reaction(message, "📌")
-    try:
-        topic1 = await bot.create_forum_topic(chat_id=message.chat.id, name="🔍 Код-Ревью и Баги", icon_color=0x6FB9F0)
-        topic2 = await bot.create_forum_topic(chat_id=message.chat.id, name="💡 Вопросы и Архитектура", icon_color=0xFFD67E)
-        await message.answer(
-            f"✅ <b>Темы успешно созданы:</b>\n"
-            f"• <code>{topic1.name}</code> (ID: {topic1.message_thread_id})\n"
-            f"• <code>{topic2.name}</code> (ID: {topic2.message_thread_id})\n\n"
-            "<i>(Примечание: для создания тем в личных диалогах у пользователя и клиента должна быть включена поддержка тем в личке Bot API 9.4)</i>",
-            parse_mode=ParseMode.HTML,
-        )
-    except Exception as e:
-        await message.answer(
-            f"ℹ️ <b>Информация о темах (Topics):</b>\n"
-            f"Telegram ответил: <code>{html.escape(str(e))}</code>\n\n"
-            "Темы в личных чатах доступны, если в вашем клиенте Telegram включен режим форумов для личных чатов или если бот добавлен в супергруппу с темами.",
-            parse_mode=ParseMode.HTML,
-        )
 
 
 @dp.message(Command("help"))
@@ -943,11 +854,8 @@ async def inline_query_handler(inline_query: types.InlineQuery):
 async def setup_bot_commands():
     commands = [
         types.BotCommand(command="start", description="🚀 Перезапуск / Статус"),
-        types.BotCommand(command="demo94", description="🎨 Демо цветных кнопок 9.4"),
         types.BotCommand(command="mode", description="⚙️ Выбрать режим работы"),
         types.BotCommand(command="thinking", description="🧠 Вкл/выкл показ рассуждений AI"),
-        types.BotCommand(command="topics", description="📌 Создать темы в чате"),
-        types.BotCommand(command="features", description="🔥 Фичи Telegram Bot API"),
         types.BotCommand(command="clear", description="🧹 Очистить контекст диалога"),
         types.BotCommand(command="help", description="📚 Справка и примеры"),
     ]
