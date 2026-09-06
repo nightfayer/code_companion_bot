@@ -13,6 +13,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramNetworkError, TelegramBadRequest
 from aiogram.types import ReactionTypeEmoji
+from aiogram.utils.chat_action import ChatActionSender
 import httpx
 from openai import AsyncOpenAI
 
@@ -567,7 +568,6 @@ async def handle_code_action(callback: types.CallbackQuery):
 
     await callback.answer()
     status_msg = await callback.message.answer("⚡ Senior AI анализирует код, секунду...")
-    await bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
 
     mode = user_modes[user_id]
     sys_prompt = MODES[mode]["prompt"]
@@ -579,12 +579,14 @@ async def handle_code_action(callback: types.CallbackQuery):
     ]
 
     try:
-        reasoning, content = await ask_model(messages, enable_thinking=show_thinking)
-        try:
-            await status_msg.delete()
-        except Exception:
-            pass
-        await send_formatted_response(callback.message.chat.id, reasoning, content, show_thinking)
+        # Непрерывная анимация «печатает...» каждые 4 секунды до отправки сообщения
+        async with ChatActionSender.typing(chat_id=callback.message.chat.id, bot=bot, interval=4.0):
+            reasoning, content = await ask_model(messages, enable_thinking=show_thinking)
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+            await send_formatted_response(callback.message.chat.id, reasoning, content, show_thinking)
     except Exception as e:
         await status_msg.edit_text(f"⚠️ Ошибка при генерации: {html.escape(str(e))}")
 
@@ -630,13 +632,13 @@ async def handle_message(message: types.Message):
 
     full_messages = [{"role": "system", "content": sys_prompt}] + history
 
-    await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
-
     try:
-        reasoning, content = await ask_model(full_messages, enable_thinking=show_thinking)
-        if content:
-            history.append({"role": "assistant", "content": content})
-        await send_formatted_response(message.chat.id, reasoning, content, show_thinking)
+        # Непрерывная анимация «печатает...» каждые 4 секунды до момента полного ответа
+        async with ChatActionSender.typing(chat_id=message.chat.id, bot=bot, interval=4.0):
+            reasoning, content = await ask_model(full_messages, enable_thinking=show_thinking)
+            if content:
+                history.append({"role": "assistant", "content": content})
+            await send_formatted_response(message.chat.id, reasoning, content, show_thinking)
     except Exception as e:
         error_text = str(e)
         if "451" in error_text:
