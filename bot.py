@@ -35,9 +35,11 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
 TELEGRAM_PROXY = os.getenv("TELEGRAM_PROXY") or os.getenv("PROXY")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "727532544"))
 
 if not BOT_TOKEN or BOT_TOKEN.startswith("ВСТАВЬТЕ"):
     print("⚠️ ВНИМАНИЕ: Укажите реальный BOT_TOKEN в файле .env!")
+
 
 # Настройка прокси
 session = None
@@ -562,7 +564,12 @@ def get_mode_keyboard():
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     await set_safe_reaction(message, "⚡")
-    user_id = message.from_user.id
+    user = message.from_user
+    user_id = user.id
+
+    # Проверяем, новый ли это пользователь перед созданием настроек в SQLite
+    is_new = not await db.is_user_exists(user_id)
+
     mode, show_thinking = await db.get_user_settings(user_id)
     mode_name = MODES.get(mode, MODES["mentor"])["title"]
     thinking_state = "Включен ✅" if show_thinking else "Выключен ❌"
@@ -587,6 +594,44 @@ async def cmd_start(message: types.Message):
         "💬 <i>Отправь описание фичи/ТЗ, форму, JSON или просто задай вопрос по QA!</i>"
     )
     await message.answer(welcome_text, parse_mode=ParseMode.HTML)
+
+    # Оповещение администратора (вас) о том, что кто-то запустил бота
+    if ADMIN_ID and user_id != ADMIN_ID:
+        try:
+            status_badge = "🆕 <b>Новый пользователь в боте!</b>" if is_new else "🔄 <b>Пользователь нажал /start</b>"
+            username_str = f"@{user.username}" if user.username else "<i>(нет юзернейма)</i>"
+            first_name = html.escape(user.first_name or "")
+            last_name = f" {html.escape(user.last_name)}" if user.last_name else ""
+            full_name = f"{first_name}{last_name}".strip() or "Без имени"
+            premium_badge = "⭐ Premium: Да" if getattr(user, "is_premium", False) else "⭐ Premium: Нет"
+            lang_badge = f"🌐 Язык: {user.language_code or 'не указан'}"
+
+            admin_alert = (
+                f"{status_badge}\n\n"
+                f"👤 <b>Пользователь:</b> {full_name}\n"
+                f"🏷 <b>Username:</b> {username_str}\n"
+                f"🆔 <b>Telegram ID:</b> <code>{user_id}</code>\n"
+                f"{lang_badge} | {premium_badge}"
+            )
+            await bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            print(f"⚠️ Не удалось отправить оповещение админу ({ADMIN_ID}): {e}")
+
+
+@dp.message(Command("stats"))
+async def cmd_stats(message: types.Message):
+    """Команда для администратора: общая статистика использования бота."""
+    if message.from_user.id != ADMIN_ID:
+        return
+    stats = await db.get_total_stats()
+    text = (
+        "📊 <b>Панель Администратора | Статистика бота</b>\n\n"
+        f"👥 Всего пользователей в базе: <b>{stats['total_users']}</b>\n"
+        f"💬 Сообщений в истории: <b>{stats['total_messages']}</b>\n"
+        f"👑 Ваш Telegram ID: <code>{ADMIN_ID}</code>"
+    )
+    await message.answer(text, parse_mode=ParseMode.HTML)
+
 
 
 @dp.callback_query(F.data == "act_cancel")

@@ -34,6 +34,26 @@ async def init_db():
         await db.commit()
 
 
+async def is_user_exists(user_id: int) -> bool:
+    """Проверяет, зарегистрирован ли уже пользователь в базе данных."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            return bool(await cursor.fetchone())
+
+
+async def get_total_stats() -> dict:
+    """Возвращает общую статистику по пользователям и сообщениям для админа."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT COUNT(*) FROM users") as c1:
+            total_users = (await c1.fetchone())[0]
+        async with db.execute("SELECT COUNT(*) FROM messages") as c2:
+            total_messages = (await c2.fetchone())[0]
+        return {
+            "total_users": total_users,
+            "total_messages": total_messages,
+        }
+
+
 async def get_user_settings(user_id: int) -> tuple[str, bool]:
     """Получает текущий режим и настройку thinking для пользователя."""
     async with aiosqlite.connect(DB_PATH) as db:
