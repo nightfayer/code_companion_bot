@@ -47,11 +47,20 @@ if not BOT_TOKEN or BOT_TOKEN.startswith("ВСТАВЬТЕ"):
 session = None
 if TELEGRAM_PROXY and TELEGRAM_PROXY.strip():
     proxy_url = TELEGRAM_PROXY.strip()
-    print(f"🌐 Используется прокси: {proxy_url}")
+    print(f"🌐 Используется прокси для Telegram: {proxy_url}")
     session = AiohttpSession(proxy=proxy_url)
-    http_client = httpx.AsyncClient(proxy=proxy_url)
+
+NVIDIA_PROXY = os.getenv("NVIDIA_PROXY") or os.getenv("TELEGRAM_PROXY") or os.getenv("PROXY") or os.getenv("HTTPS_PROXY")
+
+# Таймауты для надежности: подключение 10 сек, чтение 45 сек
+ai_timeout = httpx.Timeout(45.0, connect=10.0)
+
+if NVIDIA_PROXY and NVIDIA_PROXY.strip():
+    ai_proxy = NVIDIA_PROXY.strip()
+    print(f"🌐 Используется прокси для AI: {ai_proxy}")
+    http_client = httpx.AsyncClient(proxy=ai_proxy, timeout=ai_timeout)
 else:
-    http_client = None
+    http_client = httpx.AsyncClient(timeout=ai_timeout)
 
 bot = Bot(token=BOT_TOKEN or "DUMMY_TOKEN", session=session)
 dp = Dispatcher()
@@ -60,6 +69,7 @@ client = AsyncOpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
     api_key=NVIDIA_API_KEY or "DUMMY_KEY",
     http_client=http_client,
+    timeout=45.0,
 )
 
 # ===================== ПРАВИЛА И СТИЛИ ФОРМАТИРОВАНИЯ ДЛЯ QA =====================
@@ -368,35 +378,61 @@ async def set_safe_reaction(message: types.Message, emoji: str):
 
 
 async def ask_model(messages: list[dict], enable_thinking: bool = False) -> tuple[str, str]:
-    """Запрос к Nemotron 3.5 Lightning 30B."""
-    extra_body = {"chat_template_kwargs": {"enable_thinking": enable_thinking}}
+    """Запрос к Nemotron 3.5 Lightning 30B с защитой от зависаний."""
+    print(f"🤖 [AI] Отправка запроса к {MODEL_NAME}...")
+    extra_body = {"chat_template_kwargs": {"enable_thinking": bool(enable_thinking)}}
 
-    response_stream = await client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=messages,
-        temperature=1,
-        top_p=0.95,
-        max_tokens=8192,
-        extra_body=extra_body,
-        stream=True,
-    )
+    async def _request():
+        full_reasoning = ""
+        full_content = ""
 
-    full_reasoning = ""
-    full_content = ""
+        try:
+            response_stream = await client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=messages,
+                temperature=1,
+                top_p=0.95,
+                max_tokens=8192,
+                extra_body=extra_body,
+                stream=True,
+            )
 
-    async for chunk in response_stream:
-        if not chunk.choices:
-            continue
-        delta = chunk.choices[0].delta
+            async for chunk in response_stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
 
-        reasoning = getattr(delta, "reasoning_content", None)
-        if reasoning:
-            full_reasoning += reasoning
+                reasoning = getattr(delta, "reasoning_content", None)
+                if reasoning:
+                    full_reasoning += reasoning
 
-        if delta.content is not None:
-            full_content += delta.content
+                if delta.content is not None:
+                    full_content += delta.content
 
-    return full_reasoning.strip(), full_content.strip()
+            if full_content:
+                print(f"✅ [AI] Получен ответ ({len(full_content)} символов)")
+                return full_reasoning.strip(), full_content.strip()
+        except Exception as stream_err:
+            print(f"⚠️ [AI] Ошибка стриминга ({stream_err}), пробую без стрима...")
+
+        # Fallback на запрос без стрима, если со стримом возникла заминка
+        response = await client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            temperature=1,
+            top_p=0.95,
+            max_tokens=8192,
+            extra_body=extra_body,
+            stream=False,
+        )
+        msg = response.choices[0].message
+        content = msg.content or ""
+        reasoning = getattr(msg, "reasoning_content", None) or ""
+        print(f"✅ [AI] Получен ответ через fallback ({len(content)} символов)")
+        return reasoning.strip(), content.strip()
+
+    # Жесткий таймаут 45 секунд — бот никогда не зависнет в вечном typing
+    return await asyncio.wait_for(_request(), timeout=45.0)
 
 
 def build_rich_blocks_from_markdown(text: str) -> list:
@@ -966,13 +1002,22 @@ async def handle_message(message: types.Message):
             if content:
                 await db.add_message(user_id, "assistant", content)
             await send_formatted_response(message.chat.id, reasoning, content, show_thinking)
+    except asyncio.TimeoutError:
+        print("⚠️ [AI] Таймаут 45 сек при ожидании ответа модели!")
+        await message.answer(
+            "⏳ <b>Превышено время ожидания ответа AI (таймаут 45 сек):</b>\n"
+            "Серверы NVIDIA NIM или интернет-соединение временно задерживают ответ.\n"
+            "Попробуйте повторить запрос еще раз.",
+            parse_mode=ParseMode.HTML,
+        )
     except Exception as e:
         error_text = str(e)
+        print(f"⚠️ [AI] Ошибка: {error_text}")
         if "451" in error_text:
             await message.answer(
                 "⚠️ <b>Ошибка доступа к AI (HTTP 451):</b>\n"
                 "NVIDIA API блокирует запросы из вашего региона без VPN/прокси.\n"
-                "Включите VPN или укажите <code>TELEGRAM_PROXY</code> в файле <code>.env</code>.",
+                "Включите VPN или укажите <code>NVIDIA_PROXY</code> / <code>TELEGRAM_PROXY</code> в файле <code>.env</code>.",
                 parse_mode=ParseMode.HTML,
             )
         else:
