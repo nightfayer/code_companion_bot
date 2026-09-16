@@ -16,6 +16,9 @@ from aiogram.types import (
     ReactionTypeEmoji,
     InlineQueryResultArticle,
     InputTextMessageContent,
+    ChosenInlineResult,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
     InputRichMessage,
     InputRichBlockTable,
     InputRichBlockThinking,
@@ -1107,9 +1110,63 @@ async def inline_query_handler(inline_query: types.InlineQuery):
         await inline_query.answer(results, cache_time=30, is_personal=True)
         return
 
-    # Если запрос введён: обращаемся к модели для ответа по QA
+    # Если запрос введён: мгновенно возвращаем карточку с временной кнопкой статуса
     qid = hashlib.md5(raw_query.encode("utf-8")).hexdigest()[:10]
 
+    # Временная кнопка статуса гарантирует, что Telegram передаст inline_message_id в chosen_inline_result
+    status_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏳ генерирует ответ...", callback_data="status_generating")]
+    ])
+
+    placeholder_text = (
+        f"🔍 <b>Вопрос к QA Ментору:</b> «{html.escape(raw_query)}»\n\n"
+        "<i>⏳ Нейросеть генерирует ответ, пожалуйста, подождите несколько секунд...</i>"
+    )
+
+    results.append(
+        InlineQueryResultArticle(
+            id=f"ai_{qid}",
+            title=f"💡 Спросить AI: {raw_query[:40]}",
+            description="Отправить вопрос в чат с мгновенной генерацией ответа",
+            input_message_content=InputTextMessageContent(
+                message_text=placeholder_text,
+                parse_mode=ParseMode.HTML,
+            ),
+            reply_markup=status_keyboard,
+        )
+    )
+
+    await inline_query.answer(results, cache_time=5, is_personal=True)
+
+
+@dp.callback_query(F.data == "status_generating")
+async def cb_status_generating(callback: types.CallbackQuery):
+    """Ответ на нажатие временной кнопки во время генерации."""
+    await callback.answer("⏳ Нейросеть генерирует ответ, он появится здесь через пару секунд...", show_alert=False)
+
+
+@dp.chosen_inline_result()
+async def chosen_inline_result_handler(chosen_result: ChosenInlineResult):
+    """
+    Срабатывает сразу, как только пользователь выбрал инлайн-карточку и отправил её в чат.
+    Благодаря reply_markup Telegram всегда передаёт валидный inline_message_id!
+    """
+    inline_message_id = chosen_result.inline_message_id
+    if not inline_message_id:
+        print("⚠️ [Inline] inline_message_id не передан в chosen_inline_result")
+        return
+
+    query = chosen_result.query.strip()
+    if not query:
+        return
+
+    # Запускаем фоновую генерацию и бесшовное обновление текста
+    asyncio.create_task(process_inline_generation(inline_message_id, query))
+
+
+async def process_inline_generation(inline_message_id: str, query: str):
+    """Фоновая генерация ответа модели и бесшовное редактирование инлайн-сообщения."""
+    print(f"💬 [Inline] Начата генерация для запроса: «{query[:40]}...» (inline_id: {inline_message_id})")
     try:
         messages = [
             {
@@ -1117,49 +1174,47 @@ async def inline_query_handler(inline_query: types.InlineQuery):
                 "content": (
                     "Ты — Senior QA Manual Companion в Telegram. "
                     "Пользователь обратился к тебе через inline-запрос (@bot <запрос>) из группового или личного чата. "
-                    "Дай максимально полезный, структурированный и понятный ответ для специалиста по ручному тестированию (до 1500 символов). "
-                    "Оформи красиво в Markdown (акценты жирным, ключевые понятия и локаторы в `code`). "
+                    "Дай максимально полезный, структурированный и понятный ответ для специалиста по ручному тестированию (до 2000 символов). "
+                    "Оформи красиво в Markdown (акценты жирным, ключевые понятия и локаторы в `code`, буллеты). "
                     "Отвечай на русском языке."
                 ),
             },
-            {"role": "user", "content": raw_query},
+            {"role": "user", "content": query},
         ]
 
-        _, raw_answer = await ask_model(messages, enable_thinking=False)
+        reasoning, raw_answer = await ask_model(messages, enable_thinking=False)
         html_answer = markdown_to_telegram_html(raw_answer)
 
-        footer = f"\n\n<i>💬 QA Запрос: «{html.escape(raw_query)}»</i>"
+        footer = f"\n\n<i>💬 Запрос: «{html.escape(query)}»</i>"
         final_text = html_answer + footer
 
         if len(final_text) > 4000:
             final_text = final_text[:3950] + "\n...</i>"
 
-        results.append(
-            InlineQueryResultArticle(
-                id=f"ans_{qid}",
-                title=f"💡 QA Разбор: {raw_query[:40]}",
-                description="Отправить структурированный ответ от QA-эксперта в текущий чат",
-                input_message_content=InputTextMessageContent(
-                    message_text=final_text,
-                    parse_mode=ParseMode.HTML,
-                ),
-            )
+        # Бесшовное обновление: заменяем текст на полноценный ответ и УДАЛЯЕМ временную кнопку!
+        await bot.edit_message_text(
+            inline_message_id=inline_message_id,
+            text=final_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=None  # Удаляем временную кнопку статуса
         )
+        print(f"✅ [Inline] Сообщение успешно обновлено! (inline_id: {inline_message_id})")
     except Exception as e:
-        err_msg = f"⚠️ <b>Ошибка генерации:</b> <code>{html.escape(str(e))}</code>"
-        results.append(
-            InlineQueryResultArticle(
-                id=f"err_{qid}",
-                title="⚠️ Ошибка генерации ответа",
-                description=str(e)[:60],
-                input_message_content=InputTextMessageContent(
-                    message_text=err_msg,
-                    parse_mode=ParseMode.HTML,
-                ),
-            )
+        error_text = str(e)
+        print(f"⚠️ [Inline] Ошибка генерации: {error_text}")
+        err_msg = (
+            f"🔍 <b>Вопрос к QA Ментору:</b> «{html.escape(query)}»\n\n"
+            f"⚠️ <b>Не удалось сгенерировать ответ:</b> <code>{html.escape(error_text)}</code>"
         )
-
-    await inline_query.answer(results, cache_time=60, is_personal=True)
+        try:
+            await bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text=err_msg,
+                parse_mode=ParseMode.HTML,
+                reply_markup=None
+            )
+        except Exception:
+            pass
 
 
 # ===================== РЕГИСТРАЦИЯ КОМАНД И СТАРТ =====================
