@@ -34,11 +34,13 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
+MODEL_NAME = os.getenv("MODEL_NAME", "nvidia/nemotron-3.5-lightning-30b-a3b")
 TELEGRAM_PROXY = os.getenv("TELEGRAM_PROXY") or os.getenv("PROXY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "727532544"))
 
 if not BOT_TOKEN or BOT_TOKEN.startswith("ВСТАВЬТЕ"):
     print("⚠️ ВНИМАНИЕ: Укажите реальный BOT_TOKEN в файле .env!")
+
 
 
 # Настройка прокси
@@ -366,16 +368,14 @@ async def set_safe_reaction(message: types.Message, emoji: str):
 
 
 async def ask_model(messages: list[dict], enable_thinking: bool = False) -> tuple[str, str]:
-    """Запрос к Nemotron-120B."""
-    extra_body = {}
-    if enable_thinking:
-        extra_body = {"chat_template_kwargs": {"enable_thinking": True}}
+    """Запрос к Nemotron 3.5 Lightning 30B."""
+    extra_body = {"chat_template_kwargs": {"enable_thinking": enable_thinking}}
 
     response_stream = await client.chat.completions.create(
-        model="nvidia/nemotron-3-super-120b-a12b",
+        model=MODEL_NAME,
         messages=messages,
-        temperature=0.5,
-        top_p=0.9,
+        temperature=1,
+        top_p=0.95,
         max_tokens=8192,
         extra_body=extra_body,
         stream=True,
@@ -576,7 +576,7 @@ async def cmd_start(message: types.Message):
 
     welcome_text = (
         "👋 <b>Добро пожаловать в QA Manual Companion!</b>\n\n"
-        "Я твой персональный AI-ментор и ассистент по ручному тестированию ПО на базе <code>NVIDIA Nemotron 120B</code>.\n\n"
+        "Я твой персональный AI-ментор и ассистент по ручному тестированию ПО на базе <code>NVIDIA Nemotron 3.5 Lightning 30B</code>.\n\n"
         f"⚙️ <b>Режим работы:</b> {mode_name}\n"
         f"🧠 <b>Показ мыслей (Thinking):</b> {thinking_state}\n"
         "💾 <b>База данных SQLite:</b> Активна (история и контекст сохраняются)\n\n"
